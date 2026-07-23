@@ -1,0 +1,29 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"   # FastAPI / Web UI
+    environment:
+      - DISPLAY=:99
+      - ACCOUNT_MANAGER_DATABASE_URL=sqlite:////app/data/account_manager.db
+      # 从项目根目录 .env 读取访问密码；公网可访问时必须设置。
+      - APP_PASSWORD=${APP_PASSWORD:-}
+      # 可选：设置 VNC 密码
+      # - VNC_PASSWORD=changeme
+    volumes:
+      - ./data:/app/data   # 持久化 SQLite 数据库
+    depends_on:
+      - flaresolverr
+    restart: unless-stopped
+
+  # Cloudflare challenge helper — app calls http://flaresolverr:8191/v1
+  # UI Settings → 稳定出口 → Clearance=FlareSolverr → 地址填下方同一 URL
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Asia/Shanghai
+    ports:
+      # host-only bind: avoid exposing challenge solver to public internet
+      - "127.0.0.1:8191:8191"
+    restart: unless-stopped

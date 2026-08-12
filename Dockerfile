@@ -13,7 +13,6 @@ FROM python:3.12-slim
 # 系统依赖：Chromium、Xvfb、x11vnc、noVNC
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # 浏览器运行依赖
-    chromium chromium-driver \
     # 虚拟显示 + VNC
     xvfb x11vnc \
     # noVNC 依赖
@@ -26,15 +25,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 安装 Python 依赖（包含 Solver 依赖：patchright, quart, rich）
+# 安装 Python 依赖（包含协议、Camoufox 与本地 Solver 运行时）
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 安装 patchright/playwright 浏览器（Solver 使用）
+# 服务器镜像继续预装 Playwright Chromium，避免运行期下载影响注册稳定性。
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN playwright install --with-deps chromium
 
-# 安装 camoufox 浏览器（Solver 的 camoufox 模式使用）
+# 服务器镜像继续预装 Camoufox；桌面安装包才采用按需缓存。
 RUN python -m camoufox fetch
 
 # 复制后端代码

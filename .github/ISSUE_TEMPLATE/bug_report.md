@@ -37,7 +37,7 @@ labels: bug
 - **OS**: <!-- macOS 14 / Windows 11 / Ubuntu 22.04 -->
 - **Python**: <!-- 3.11 / 3.12 -->
 - **Node**: <!-- 22 -->
-- **版本 / Version**: <!-- v2.0.0 / desktop / docker / source -->
+- **版本 / Version**: <!-- v2.0.1 / desktop / docker / source -->
 - **执行模式 / Mode**: <!-- protocol / headless / headed -->
 - **代理 / Proxy**: <!-- 无 / 数据中心 / 住宅 -->
 - **平台 / Platform**: <!-- chatgpt -->

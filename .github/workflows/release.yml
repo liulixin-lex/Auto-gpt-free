@@ -10,7 +10,6 @@ permissions:
 
 env:
   PYTHONUNBUFFERED: '1'
-  PLAYWRIGHT_BROWSERS_PATH: '0'
 
 jobs:
   verify:
@@ -35,7 +34,7 @@ jobs:
 
       - name: Verify backend
         run: |
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
           python -m pytest -q
 
       - name: Verify frontend
@@ -69,12 +68,6 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements.txt
 
-      - name: Install bundled Camoufox
-        run: |
-          python -m camoufox fetch
-          python -c "from camoufox import launch_options; launch_options(headless=True)"
-          python -c "from camoufox.geolocation import download_mmdb; download_mmdb()"
-
       - name: Build frontend
         run: cd frontend && npm ci --legacy-peer-deps && npm run build
 
@@ -89,6 +82,7 @@ jobs:
         run: |
           pip install pyinstaller
           pyinstaller --onedir --name backend \
+            --exclude-module patchright \
             --add-data "platforms:platforms" \
             --add-data "core:core" \
             --add-data "api:api" \
@@ -105,12 +99,10 @@ jobs:
             --hidden-import uvicorn.lifespan.on \
             --hidden-import services.turnstile_solver.api_solver \
             --hidden-import services.turnstile_solver.db_results \
-            --hidden-import services.turnstile_solver.browser_configs \
             --hidden-import services.turnstile_solver.start \
             --collect-all browserforge \
             --collect-all camoufox \
             --collect-all playwright \
-            --collect-all patchright \
             --collect-all apify_fingerprint_datapoints \
             --collect-all language_tags \
             --collect-all ua_parser \
@@ -120,25 +112,6 @@ jobs:
             --collect-all aiofiles \
             --collect-all werkzeug \
             main.py
-          python -m playwright install chromium
-          python -m patchright install chromium
-          PLAYWRIGHT_SOURCE="$(python -c 'from pathlib import Path; import playwright; print(Path(playwright.__file__).parent / "driver" / "package" / ".local-browsers")')"
-          PLAYWRIGHT_TARGET="$(find dist/backend -type d -path '*/playwright/driver/package' -print -quit)"
-          test -n "$PLAYWRIGHT_TARGET"
-          mkdir -p "$PLAYWRIGHT_TARGET/.local-browsers"
-          cp -R "$PLAYWRIGHT_SOURCE/." "$PLAYWRIGHT_TARGET/.local-browsers/"
-          PATCHRIGHT_SOURCE="$(python -c 'from pathlib import Path; import patchright; print(Path(patchright.__file__).parent / "driver" / "package" / ".local-browsers")')"
-          PATCHRIGHT_TARGET="$(find dist/backend -type d -path '*/patchright/driver/package' -print -quit)"
-          test -n "$PATCHRIGHT_TARGET"
-          mkdir -p "$PATCHRIGHT_TARGET/.local-browsers"
-          cp -R "$PATCHRIGHT_SOURCE/." "$PATCHRIGHT_TARGET/.local-browsers/"
-          CAMOUFOX_PATH="$(python -c 'from camoufox.pkgman import camoufox_path; print(camoufox_path())')"
-          CAMOUFOX_CACHE="$(python -c 'from camoufox.pkgman import INSTALL_DIR; print(INSTALL_DIR)')"
-          mkdir -p electron/camoufox-browser
-          cp -R "$CAMOUFOX_PATH/." electron/camoufox-browser/
-          mkdir -p electron/camoufox-addons electron/camoufox-geoip
-          cp -R "$CAMOUFOX_CACHE/addons/." electron/camoufox-addons/
-          cp -R "$CAMOUFOX_CACHE/geoip/." electron/camoufox-geoip/
           mkdir -p electron/backend
           cp -r dist/backend electron/backend/
 
@@ -181,12 +154,6 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements.txt
 
-      - name: Install bundled Camoufox
-        run: |
-          python -m camoufox fetch
-          python -c "from camoufox import launch_options; launch_options(headless=True)"
-          python -c "from camoufox.geolocation import download_mmdb; download_mmdb()"
-
       - name: Build frontend
         run: cd frontend && npm ci --legacy-peer-deps && npm run build
 
@@ -203,6 +170,7 @@ jobs:
         run: |
           pip install pyinstaller
           pyinstaller --onedir --name backend `
+            --exclude-module patchright `
             --add-data "platforms;platforms" `
             --add-data "core;core" `
             --add-data "api;api" `
@@ -219,12 +187,10 @@ jobs:
             --hidden-import uvicorn.lifespan.on `
             --hidden-import services.turnstile_solver.api_solver `
             --hidden-import services.turnstile_solver.db_results `
-            --hidden-import services.turnstile_solver.browser_configs `
             --hidden-import services.turnstile_solver.start `
             --collect-all browserforge `
             --collect-all camoufox `
             --collect-all playwright `
-            --collect-all patchright `
             --collect-all apify_fingerprint_datapoints `
             --collect-all language_tags `
             --collect-all ua_parser `
@@ -234,28 +200,6 @@ jobs:
             --collect-all aiofiles `
             --collect-all werkzeug `
             main.py
-          python -m playwright install chromium
-          python -m patchright install chromium
-          $browserSource = python -c "from pathlib import Path; import playwright; print(Path(playwright.__file__).parent / 'driver' / 'package' / '.local-browsers')"
-          $playwrightPackage = Get-ChildItem -Path dist/backend -Directory -Recurse | Where-Object { ($_.FullName -replace '\\', '/') -match '/playwright/driver/package$' } | Select-Object -First 1
-          if (-not $playwrightPackage) { throw "Packaged Playwright driver directory not found" }
-          $browserTarget = Join-Path $playwrightPackage.FullName ".local-browsers"
-          New-Item -ItemType Directory -Force -Path $browserTarget | Out-Null
-          Copy-Item -Recurse -Force "$browserSource/*" $browserTarget
-          $patchrightSource = python -c "from pathlib import Path; import patchright; print(Path(patchright.__file__).parent / 'driver' / 'package' / '.local-browsers')"
-          $patchrightPackage = Get-ChildItem -Path dist/backend -Directory -Recurse | Where-Object { ($_.FullName -replace '\\', '/') -match '/patchright/driver/package$' } | Select-Object -First 1
-          if (-not $patchrightPackage) { throw "Packaged Patchright driver directory not found" }
-          $patchrightTarget = Join-Path $patchrightPackage.FullName ".local-browsers"
-          New-Item -ItemType Directory -Force -Path $patchrightTarget | Out-Null
-          Copy-Item -Recurse -Force "$patchrightSource/*" $patchrightTarget
-          $camoufoxSource = python -c "from camoufox.pkgman import camoufox_path; print(camoufox_path())"
-          $camoufoxCache = python -c "from camoufox.pkgman import INSTALL_DIR; print(INSTALL_DIR)"
-          New-Item -ItemType Directory -Force -Path electron/camoufox-browser | Out-Null
-          Copy-Item -Recurse -Force "$camoufoxSource/*" electron/camoufox-browser
-          New-Item -ItemType Directory -Force -Path electron/camoufox-addons | Out-Null
-          Copy-Item -Recurse -Force "$camoufoxCache/addons/*" electron/camoufox-addons
-          New-Item -ItemType Directory -Force -Path electron/camoufox-geoip | Out-Null
-          Copy-Item -Recurse -Force "$camoufoxCache/geoip/*" electron/camoufox-geoip
           New-Item -ItemType Directory -Force -Path electron/backend
           Copy-Item -Recurse dist/backend electron/backend/
         shell: pwsh

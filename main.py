@@ -58,7 +58,6 @@ from fastapi.staticfiles import StaticFiles
 if False:  # pragma: no cover
     import services.turnstile_solver.api_solver  # noqa: F401
     import quart  # noqa: F401
-    import patchright  # noqa: F401
     import rich  # noqa: F401
 
 from api.account_checks import router as account_checks_router
@@ -92,8 +91,6 @@ async def lifespan(app: FastAPI):
     from infrastructure.registration_repository import resource_leases
     resource_leases.reap_expired()
     task_runtime.start()
-    from services.solver_manager import start_async
-    start_async()
     yield
     from services.task_runtime import task_runtime as _task_runtime
     _task_runtime.stop()

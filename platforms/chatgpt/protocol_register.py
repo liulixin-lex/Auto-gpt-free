@@ -265,6 +265,9 @@ class _SentinelBrowserRuntime:
         proxy: str | None,
         profile: dict | None = None,
     ):
+        from services.browser_runtime import ensure_playwright_chromium
+
+        ensure_playwright_chromium()
         from playwright.sync_api import sync_playwright
 
         self.profile = dict(profile or {})

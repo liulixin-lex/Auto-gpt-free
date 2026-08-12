@@ -45,25 +45,10 @@ def _ensure_camoufox_browser() -> bool:
     首次下载约 100MB，之后会有缓存跳过。
     """
     try:
-        from camoufox.pkgman import installed_verstr, CamoufoxNotInstalled
-    except Exception as e:
-        print(f"[Solver] camoufox 库导入失败: {e}")
-        return False
+        from services.browser_runtime import ensure_camoufox
 
-    try:
-        ver = installed_verstr()
-        print(f"[Solver] Camoufox 浏览器已就绪 (v{ver})")
-        return True
-    except CamoufoxNotInstalled:
-        pass
-    except Exception as e:
-        print(f"[Solver] Camoufox 浏览器检测异常，仍尝试安装: {e}")
-
-    print("[Solver] Camoufox 浏览器未安装，开始下载（约 100MB，请耐心等待）...")
-    try:
-        from camoufox.pkgman import CamoufoxFetcher
-        CamoufoxFetcher().install()
-        print("[Solver] Camoufox 浏览器下载完成")
+        executable = ensure_camoufox()
+        print(f"[Solver] Camoufox 浏览器已就绪 ({executable.name})")
         return True
     except Exception as e:
         print(f"[Solver] Camoufox 浏览器下载失败: {e}")

@@ -10,9 +10,7 @@ from urllib.parse import urlsplit
 import argparse
 from quart import Quart, request, jsonify
 from camoufox.async_api import AsyncCamoufox
-from patchright.async_api import async_playwright
 from db_results import init_db, save_result, load_result, cleanup_old_results
-from browser_configs import browser_config
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -65,36 +63,20 @@ class TurnstileAPIServer:
     def __init__(self, headless: bool, useragent: Optional[str], debug: bool, browser_type: str, thread: int, proxy_support: bool, use_random_config: bool = False, browser_name: Optional[str] = None, browser_version: Optional[str] = None):
         self.app = Quart(__name__)
         self.debug = debug
-        self.browser_type = browser_type
+        self.browser_type = "camoufox"
         self.headless = headless
         self.thread_count = thread
         self.proxy_support = proxy_support
         self.browser_pool = asyncio.Queue()
-        self.use_random_config = use_random_config
-        self.browser_name = browser_name
-        self.browser_version = browser_version
+        self.use_random_config = False
+        self.browser_name = "camoufox"
+        self.browser_version = "managed"
         self.console = Console()
         
         # Initialize useragent and sec_ch_ua attributes
         self.useragent = useragent
         self.sec_ch_ua = None
         
-        
-        if self.browser_type in ['chromium', 'chrome', 'msedge']:
-            if browser_name and browser_version:
-                config = browser_config.get_browser_config(browser_name, browser_version)
-                if config:
-                    useragent, sec_ch_ua = config
-                    self.useragent = useragent
-                    self.sec_ch_ua = sec_ch_ua
-            elif useragent:
-                self.useragent = useragent
-            else:
-                browser, version, useragent, sec_ch_ua = browser_config.get_random_browser_config(self.browser_type)
-                self.browser_name = browser
-                self.browser_version = version
-                self.useragent = useragent
-                self.sec_ch_ua = sec_ch_ua
         
         self.browser_args = []
         if self.useragent:
@@ -158,38 +140,17 @@ class TurnstileAPIServer:
 
     async def _initialize_browser(self) -> None:
         """Initialize the browser and create the page pool."""
-        playwright = None
-        camoufox = None
+        from services.browser_runtime import ensure_camoufox
 
-        if self.browser_type in ['chromium', 'chrome', 'msedge']:
-            playwright = await async_playwright().start()
-        elif self.browser_type == "camoufox":
-            camoufox = AsyncCamoufox(headless=self.headless)
+        ensure_camoufox()
+        camoufox = AsyncCamoufox(headless=self.headless)
 
         browser_configs = []
         for _ in range(self.thread_count):
-            if self.browser_type in ['chromium', 'chrome', 'msedge']:
-                if self.use_random_config:
-                    browser, version, useragent, sec_ch_ua = browser_config.get_random_browser_config(self.browser_type)
-                elif self.browser_name and self.browser_version:
-                    config = browser_config.get_browser_config(self.browser_name, self.browser_version)
-                    if config:
-                        useragent, sec_ch_ua = config
-                        browser = self.browser_name
-                        version = self.browser_version
-                    else:
-                        browser, version, useragent, sec_ch_ua = browser_config.get_random_browser_config(self.browser_type)
-                else:
-                    browser = getattr(self, 'browser_name', 'custom')
-                    version = getattr(self, 'browser_version', 'custom')
-                    useragent = self.useragent
-                    sec_ch_ua = getattr(self, 'sec_ch_ua', '')
-            else:
-                # Для camoufox и других браузеров используем значения по умолчанию
-                browser = self.browser_type
-                version = 'custom'
-                useragent = self.useragent
-                sec_ch_ua = getattr(self, 'sec_ch_ua', '')
+            browser = "camoufox"
+            version = "managed"
+            useragent = self.useragent
+            sec_ch_ua = ""
 
             
             browser_configs.append({
@@ -210,14 +171,7 @@ class TurnstileAPIServer:
                 browser_args.append(f"--user-agent={config['useragent']}")
             
             browser = None
-            if self.browser_type in ['chromium', 'chrome', 'msedge'] and playwright:
-                browser = await playwright.chromium.launch(
-                    channel=self.browser_type,
-                    headless=self.headless,
-                    args=browser_args
-                )
-            elif self.browser_type == "camoufox" and camoufox:
-                browser = await camoufox.start()
+            browser = await camoufox.start()
 
             if browser:
                 await self.browser_pool.put((i+1, browser, config))
@@ -710,11 +664,6 @@ class TurnstileAPIServer:
         };
         """)
         
-        if self.browser_type in ['chromium', 'chrome', 'msedge']:
-            await page.set_viewport_size({"width": 1280, "height": 720})
-            if self.debug:
-                logger.debug(f"Browser {index}: Set viewport size to 1280x720")
-
         start_time = time.time()
 
         try:
@@ -1064,7 +1013,7 @@ def parse_args():
     parser.add_argument('--no-headless', action='store_true', help='Run the browser with GUI (disable headless mode). By default, headless mode is enabled.')
     parser.add_argument('--useragent', type=str, help='User-Agent string (if not specified, random configuration is used)')
     parser.add_argument('--debug', action='store_true', help='Enable or disable debug mode for additional logging and troubleshooting information (default: False)')
-    parser.add_argument('--browser_type', type=str, default='chromium', help='Specify the browser type for the solver. Supported options: chromium, chrome, msedge, camoufox (default: chromium)')
+    parser.add_argument('--browser_type', type=str, default='camoufox', choices=['camoufox'], help='Browser engine used by the local solver')
     parser.add_argument('--thread', type=int, default=4, help='Set the number of browser threads to use for multi-threaded mode. Increasing this will speed up execution but requires more resources (default: 1)')
     parser.add_argument('--proxy', action='store_true', help='Enable proxy support for the solver (Default: False)')
     parser.add_argument('--random', action='store_true', help='Use random User-Agent and Sec-CH-UA configuration from pool')
@@ -1082,12 +1031,7 @@ def create_app(headless: bool, useragent: str, debug: bool, browser_type: str, t
 
 if __name__ == '__main__':
     args = parse_args()
-    browser_types = [
-        'chromium',
-        'chrome',
-        'msedge',
-        'camoufox',
-    ]
+    browser_types = ['camoufox']
     if args.browser_type not in browser_types:
         logger.error(f"Unknown browser type: {COLORS.get('RED')}{args.browser_type}{COLORS.get('RESET')} Available browser types: {browser_types}")
     else:

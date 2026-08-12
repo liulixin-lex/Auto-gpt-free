@@ -12,6 +12,9 @@ class PlaywrightExecutor(BaseExecutor):
         self._init()
 
     def _init(self):
+        from services.browser_runtime import ensure_playwright_chromium
+
+        ensure_playwright_chromium()
         from playwright.sync_api import sync_playwright
         self._pw = sync_playwright().start()
         launch_opts = {

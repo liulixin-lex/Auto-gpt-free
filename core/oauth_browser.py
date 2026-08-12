@@ -204,6 +204,9 @@ class OAuthBrowser:
             else:
                 # Fallback: plain Playwright Chromium
                 self.log("[OAuthBrowser] 未找到系统 Chrome，使用 Playwright Chromium")
+                from services.browser_runtime import ensure_playwright_chromium
+
+                ensure_playwright_chromium(self._pw.chromium.executable_path)
                 launch_kwargs = {"headless": self.headless}
                 if proxy_cfg:
                     launch_kwargs["proxy"] = proxy_cfg

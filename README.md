@@ -84,7 +84,7 @@ prepare -> preflight -> auth_begin -> email_submit -> otp_trigger
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 cd frontend
 npm ci
@@ -100,7 +100,7 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 docker compose up -d --build
 ```
 
-发布标签会通过 GitHub Actions 生成 Windows 与 macOS 桌面安装包，并同步发布 GHCR Docker 镜像。桌面包内置协议模式所需的 Chromium、本地打码所需的 Patchright Chromium 与浏览器模式所需的 Camoufox，数据库和失败证据保存在系统用户数据目录，应用更新不会覆盖账号数据。
+发布标签会通过 GitHub Actions 生成 Windows 与 macOS 桌面安装包，并同步发布 GHCR Docker 镜像。服务器镜像预装 Playwright Chromium 与 Camoufox；桌面端在首次使用对应模式时下载运行时并持久缓存，后续升级继续复用。数据库、浏览器缓存和失败证据保存在系统用户数据目录，应用更新不会覆盖账号数据。
 
 ## 项目结构
 
@@ -114,7 +114,9 @@ docker compose up -d --build
 ├── platforms/chatgpt/      # ChatGPT 注册、检测与凭证处理
 ├── providers/              # 邮箱、验证码和代理 provider
 ├── frontend/               # React + Vite 管理界面
-├── services/               # 任务运行服务
+├── services/               # 任务、浏览器运行时与本地打码服务
+├── electron/               # 桌面主进程与发布配置
+├── scripts/                # 运维与冒烟检查脚本
 ├── tests/                  # 自动化测试
 └── main.py                 # 应用入口
 ```

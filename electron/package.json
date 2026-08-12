@@ -1,6 +1,6 @@
 {
   "name": "auto-gpt-free",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Auto-gpt-free - ChatGPT 账号注册、检测与管理工具",
   "main": "main.js",
   "scripts": {

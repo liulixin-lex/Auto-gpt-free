@@ -6,6 +6,11 @@ directories:
   output: dist
   buildResources: build
 
+files:
+  - main.js
+  - package.json
+  - node_modules/**/*
+
 # 自动更新：从 GitHub Releases 检查
 publish:
   provider: github
@@ -16,18 +21,6 @@ publish:
 extraResources:
   - from: backend
     to: backend
-    filter:
-      - "**/*"
-  - from: camoufox-browser
-    to: camoufox-browser
-    filter:
-      - "**/*"
-  - from: camoufox-addons
-    to: camoufox-addons
-    filter:
-      - "**/*"
-  - from: camoufox-geoip
-    to: camoufox-geoip
     filter:
       - "**/*"
 

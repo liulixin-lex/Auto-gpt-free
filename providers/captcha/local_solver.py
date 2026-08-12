@@ -1,11 +1,11 @@
-"""Local Turnstile solver (Camoufox / patchright)."""
+"""Local Turnstile solver backed by Camoufox."""
 from core.base_captcha import BaseCaptcha
 from providers.registry import register_provider
 
 
 @register_provider("captcha", "local_solver")
 class LocalSolverCaptcha(BaseCaptcha):
-    """调用本地 api_solver 服务解 Turnstile（Camoufox/patchright）"""
+    """调用本地 Camoufox solver 服务解 Turnstile。"""
 
     def __init__(self, solver_url: str = ""):
         self.solver_url = solver_url.rstrip("/")

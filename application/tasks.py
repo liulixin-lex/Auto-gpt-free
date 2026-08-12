@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 import uuid
@@ -1180,6 +1181,20 @@ def _execute_register_task(payload: dict[str, Any], logger: TaskLogger) -> None:
         logger.log(f"不支持的注册方式: {executor_type}", level="error")
         logger.finish(TASK_STATUS_FAILED, error=f"不支持的注册方式: {executor_type}")
         return
+
+    if getattr(sys, "frozen", False):
+        try:
+            from services.browser_runtime import ensure_camoufox, ensure_playwright_chromium
+
+            if requested_mode == RegistrationMode.PROTOCOL:
+                ensure_playwright_chromium()
+            else:
+                ensure_camoufox()
+        except Exception as exc:
+            message = f"注册运行时准备失败: {type(exc).__name__}: {exc}"
+            logger.log(message, level="error")
+            logger.finish(TASK_STATUS_FAILED, error=message)
+            return
 
     proxy_count = 0
     try:

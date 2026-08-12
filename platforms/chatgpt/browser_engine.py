@@ -322,6 +322,10 @@ class CamoufoxEngine:
     def open(self):
         if self._camoufox_class is None:
             raise RuntimeError("Camoufox is unavailable; install it and run python -m camoufox fetch")
+        if self._camoufox_class is _Camoufox:
+            from services.browser_runtime import ensure_camoufox
+
+            ensure_camoufox()
         return self._camoufox_class(**self.build_launch_options())
 
 

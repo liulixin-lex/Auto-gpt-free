@@ -282,7 +282,7 @@ _BUILTIN_DEFINITIONS: list[dict] = [
         "provider_type": "captcha",
         "provider_key": "local_solver",
         "label": "本地验证码求解器",
-        "description": "调用本地 api_solver 服务（Camoufox/patchright）解 Turnstile 验证码",
+        "description": "调用本地 Camoufox 求解服务处理 Turnstile 验证码",
         "driver_type": "local_solver",
         "default_auth_mode": "",
         "enabled": True,

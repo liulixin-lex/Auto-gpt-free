@@ -206,6 +206,26 @@ def test_engine_opens_injected_camoufox_with_built_options():
     assert _FakeCamoufox.last_kwargs["window"]
 
 
+def test_production_engine_prepares_camoufox_before_open(monkeypatch):
+    from platforms.chatgpt import browser_engine
+    from services import browser_runtime
+
+    class _ProductionCamoufox(_FakeCamoufox):
+        pass
+
+    monkeypatch.setattr(browser_engine, "_Camoufox", _ProductionCamoufox)
+    monkeypatch.setattr(browser_runtime, "ensure_camoufox", lambda: Path("camoufox.exe"))
+    engine = browser_engine.CamoufoxEngine(
+        headless=True,
+        attempt_id="attempt-runtime",
+        camoufox_class=_ProductionCamoufox,
+        system_name="Windows",
+    )
+
+    with engine.open() as browser:
+        assert browser == "camoufox-browser"
+
+
 def test_engine_reports_missing_camoufox_at_open_time():
     engine = CamoufoxEngine(
         headless=True,

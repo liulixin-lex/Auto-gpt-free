@@ -8,31 +8,7 @@ class ConfigRepository:
     BASE_KEYS = {
         "default_executor",
         "default_identity_provider",
-        # CLIProxyAPI / CPA
-        "cpa_api_url",
-        "cpa_api_key",
-        # Sub2API
-        "sub2api_base_url",
-        "sub2api_token",
-        "sub2api_email",
-        "sub2api_password",
-        # Remote sync target: none | cpa | sub2api | both
-        "sync_target",
-        "auto_upload_enabled",
-        # Continuous probe / cleanup / replenish
-        "auto_probe_enabled",
-        "auto_probe_interval_minutes",
-        "auto_ops_interval_seconds",
-        "auto_delete_remote_enabled",
-        "auto_delete_local_invalid",
-        "auto_sync_delete_enabled",
-        "auto_register_enabled",
-        "auto_replenish_enabled",
-        "auto_replenish_target",
-        "auto_register_count",
-        "auto_register_concurrency",
-        "auto_register_executor",
-        # Optional stable egress / CF clearance (Settings → 同步)
+        # Optional stable egress / CF clearance.
         "proxy_runtime_enabled",
         "proxy_runtime_proxy_url",
         "proxy_runtime_scope",
@@ -43,13 +19,6 @@ class ConfigRepository:
         "proxy_runtime_refresh_interval_sec",
         "proxy_runtime_timeout_sec",
         "proxy_runtime_skip_ssl_verify",
-        # runtime status (read-mostly)
-        "auto_ops_last_probe_at",
-        "auto_ops_last_probe_result",
-        "auto_ops_last_replenish_at",
-        "auto_ops_last_cycle_at",
-        "auto_ops_last_cycle_summary",
-        "persistent_task_auto_ops",
     }
 
     def __init__(self, definitions: ProviderDefinitionsRepository | None = None):

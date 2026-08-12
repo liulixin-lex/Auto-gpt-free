@@ -24,6 +24,7 @@ function authHeaders(): Record<string, string> {
 export async function apiFetch(path: string, opts?: RequestInit) {
   const res = await fetch(API + path, {
     ...opts,
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(opts?.headers || {}) },
   })
   if (res.status === 401 && !path.startsWith('/auth/')) {
@@ -38,6 +39,7 @@ export async function apiFetch(path: string, opts?: RequestInit) {
 export async function apiDownload(path: string, opts?: RequestInit) {
   const res = await fetch(API + path, {
     ...opts,
+    credentials: 'include',
     headers: {
       ...(opts?.body ? { 'Content-Type': 'application/json' } : {}),
       ...authHeaders(),

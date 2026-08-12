@@ -1,5 +1,6 @@
 """YesCaptcha — cloud Turnstile solver."""
 import time
+from urllib.parse import unquote, urlsplit
 
 import requests
 
@@ -27,9 +28,7 @@ class PermanentCaptchaError(RuntimeError):
         self.error_code = error_code
 
 
-# **PayPal 实战证据** task_1779728842876：sitekey ``bf07db68-...`` 在 YesCaptcha
-# 上没白名单，3s 一次的 retry loop 立刻把帐号刷出 ``ERROR_IP_BLOCKED_5MIN``。
-# 必须 fail-fast 让上层降级到 manual wait，不要继续浪费 quota / 招封禁。
+# 永久错误需要 fail-fast，让上层降级处理，避免继续消耗 quota 或触发封禁。
 _PERMANENT_ERROR_CODES: frozenset = frozenset({
     "ERROR_DOMAIN_NOT_ALLOWED",
     "ERROR_KEY_DOES_NOT_EXIST",
@@ -65,17 +64,83 @@ class YesCaptcha(BaseCaptcha):
             raise RuntimeError("YesCaptcha Key 未配置")
         return cls(client_key)
 
-    def solve_turnstile(self, page_url: str, site_key: str) -> str:
+    @staticmethod
+    def _turnstile_task(
+        page_url: str,
+        site_key: str,
+        *,
+        proxy_url: str | None,
+        user_agent: str,
+        action: str = "",
+        cdata: str = "",
+        pagedata: str = "",
+    ) -> dict:
+        task = {
+            "type": "TurnstileTaskProxyless",
+            "websiteURL": page_url,
+            "websiteKey": site_key,
+        }
+        if user_agent:
+            task["userAgent"] = user_agent
+        if action:
+            task["action"] = action
+        if cdata:
+            task["data"] = cdata
+        if pagedata:
+            task["pagedata"] = pagedata
+        raw_proxy = str(proxy_url or "").strip()
+        if not raw_proxy:
+            return task
+        parsed = urlsplit(raw_proxy if "://" in raw_proxy else f"http://{raw_proxy}")
+        if not parsed.hostname or not parsed.port:
+            raise ValueError("Turnstile proxy must include host and port")
+        proxy_type = parsed.scheme.lower().replace("socks5h", "socks5")
+        task.update(
+            {
+                "type": "TurnstileTask",
+                "proxyType": proxy_type,
+                "proxyAddress": parsed.hostname,
+                "proxyPort": parsed.port,
+            }
+        )
+        if parsed.username:
+            task["proxyLogin"] = unquote(parsed.username)
+        if parsed.password:
+            task["proxyPassword"] = unquote(parsed.password)
+        return task
+
+    def solve_turnstile(
+        self,
+        page_url: str,
+        site_key: str,
+        *,
+        proxy_url: str | None = None,
+        user_agent: str = "",
+        timeout_seconds: float = 180.0,
+        action: str = "",
+        cdata: str = "",
+        pagedata: str = "",
+        attempt_id: str = "",
+    ) -> str:
+        task = self._turnstile_task(
+            page_url,
+            site_key,
+            proxy_url=proxy_url,
+            user_agent=user_agent,
+            action=action,
+            cdata=cdata,
+            pagedata=pagedata,
+        )
         r = insecure_request(requests.post, f"{self.api}/createTask", json={
             "clientKey": self.client_key,
-            "task": {"type": "TurnstileTaskProxyless",
-                     "websiteURL": page_url, "websiteKey": site_key}
+            "task": task,
         }, timeout=30)
         task_id = r.json().get("taskId")
         if not task_id:
             raise RuntimeError(f"YesCaptcha 创建任务失败: {r.text}")
-        for _ in range(60):
-            time.sleep(3)
+        deadline = time.monotonic() + max(float(timeout_seconds), 1.0)
+        while time.monotonic() < deadline:
+            time.sleep(min(3.0, max(deadline - time.monotonic(), 0.01)))
             d = insecure_request(requests.post, f"{self.api}/getTaskResult", json={
                 "clientKey": self.client_key, "taskId": task_id
             }, timeout=30).json()
@@ -112,18 +177,7 @@ class YesCaptcha(BaseCaptcha):
     def solve_hcaptcha(self, page_url: str, site_key: str) -> str:
         """求解 hCaptcha (proxyless)。
 
-        **PayPal 实战证据** (`@tools/captures/checkout-20260526-003842-z6qrov0qi0_edu.hsxhome.com.har`
-        entry 347): ``paypal.com/pay/?...`` Security Challenge 页面嵌的
-        iframe ``paypalobjects.com/.../hcaptcha/hcaptcha_fph.html?siteKey=...``
-        指向自定义域 ``hcaptcha.paypal.com`` —— 这是 **enterprise hCaptcha**，
-        不是普通 hCaptcha。
-
-        YesCaptcha 普通 ``HCaptchaTaskProxyless`` 对 enterprise sitekey 会返
-        ``ERROR_DOMAIN_NOT_ALLOWED``（实战 task_1779728405206 的失败 log 证据）。
-        必须先用 ``HCaptchaEnterpriseTaskProxyless`` 试一次；它对部分非 enterprise
-        sitekey 也兼容（YesCaptcha 内部会按 sitekey 形态 fallback）。
-
-        失败回退到普通 ``HCaptchaTaskProxyless`` 兼容老 sitekey。两种都不行才抛错。
+        先尝试 enterprise 任务类型，再回退普通任务类型，以兼容不同 sitekey。
         """
         last_error = ""
         last_perm_code = ""

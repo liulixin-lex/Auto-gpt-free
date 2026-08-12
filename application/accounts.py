@@ -58,24 +58,14 @@ class AccountsService:
         item = self.repository.update(account_id, command)
         return self._serialize(item) if item else None
 
-    def delete_account(self, account_id: int, *, sync_remote: bool = True) -> dict:
-        """Delete local account; when remote sync is on, also remove remote credentials."""
-        remote_result = None
-        if sync_remote:
-            try:
-                from application.remote_upload import delete_remote_for_account, sync_targets
-
-                if sync_targets():
-                    remote_result = delete_remote_for_account(int(account_id))
-            except Exception as exc:
-                remote_result = {"ok": False, "error": str(exc)}
+    def delete_account(self, account_id: int) -> dict:
+        """Delete one local ChatGPT account."""
         ok = self.repository.delete(account_id)
-        out: dict = {"ok": ok}
-        if remote_result is not None:
-            out["remote"] = remote_result
-        return out
+        return {"ok": ok}
 
     def import_accounts(self, platform: str, lines: list[str]) -> dict:
+        if platform != "chatgpt":
+            raise ValueError("仅支持导入 ChatGPT 账号")
         parsed: list[AccountImportLine] = []
         csv_header: list[str] | None = None
         for line in lines:

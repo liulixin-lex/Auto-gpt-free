@@ -19,13 +19,16 @@ class ProxyPool:
         self._health: dict[str, dict] = {}  # url -> {ok, at, error}
 
     def count_available(self, region: str = "") -> int:
-        """How many proxies can currently be used (dynamic counts as at least 1)."""
-        try:
-            from core.proxy_providers import get_dynamic_proxy
+        """How many independent exits can currently be leased.
 
-            if get_dynamic_proxy():
-                # Dynamic gateway can mint many IPs; treat as "enough" for concurrency.
-                return 99
+        A rotating gateway URL is one lease unless the provider explicitly
+        returns distinct sticky endpoints. It must never inflate concurrency.
+        """
+        try:
+            from core.proxy_providers import has_dynamic_proxy_config
+
+            if has_dynamic_proxy_config():
+                return 1
         except Exception:
             pass
         with Session(engine) as s:
@@ -139,10 +142,14 @@ class ProxyPool:
                     host = urlparse(proxy).hostname or proxy[:40]
                 except Exception:
                     host = proxy[:40]
+            from core.proxy_runtime import public_endpoint_url
+            from domain.registration_runtime import stable_resource_ref
+
             result = {
                 "ok": ok,
                 "status_code": code,
-                "proxy": proxy or "",
+                "proxy_ref": stable_resource_ref(proxy),
+                "proxy_url": public_endpoint_url(proxy, empty="direct"),
                 "proxy_host": host or "direct",
                 "error": "" if ok else (f"HTTP {code}" if code else "probe failed"),
             }
@@ -155,12 +162,16 @@ class ProxyPool:
         except Exception as exc:
             if proxy:
                 self.report_fail(proxy)
+            from core.proxy_runtime import public_endpoint_url
+            from domain.registration_runtime import redact_registration_text, stable_resource_ref
+
             return {
                 "ok": False,
                 "status_code": 0,
-                "proxy": proxy or "",
+                "proxy_ref": stable_resource_ref(proxy),
+                "proxy_url": public_endpoint_url(proxy, empty="direct"),
                 "proxy_host": "direct",
-                "error": str(exc)[:200],
+                "error": redact_registration_text(exc)[:200],
             }
 
     def check_all(self) -> dict:
@@ -180,10 +191,21 @@ class ProxyPool:
                 if r.status_code == 200:
                     self.report_success(p.url)
                     results["ok"] += 1
-                    results["items"].append({"url": p.url, "ok": True})
+                    from core.proxy_runtime import public_endpoint_url
+
+                    results["items"].append({"url": public_endpoint_url(p.url), "ok": True})
                     continue
             except Exception as exc:
-                results["items"].append({"url": p.url, "ok": False, "error": str(exc)[:120]})
+                from core.proxy_runtime import public_endpoint_url
+                from domain.registration_runtime import redact_registration_text
+
+                results["items"].append(
+                    {
+                        "url": public_endpoint_url(p.url),
+                        "ok": False,
+                        "error": redact_registration_text(exc)[:120],
+                    }
+                )
             self.report_fail(p.url)
             results["fail"] += 1
         return results

@@ -9,6 +9,7 @@ from typing import Tuple
 from datetime import datetime, timezone, timedelta
 
 from curl_cffi import requests as cffi_requests
+from domain.registration_runtime import stable_resource_ref
 
 logger = logging.getLogger(__name__)
 CPA_TIMEZONE = timezone(timedelta(hours=8))
@@ -89,8 +90,12 @@ def generate_token_json(account) -> dict:
     id_token = _extract_credential(account, "id_token")
     session_token = _extract_credential(account, "session_token")
 
-    logger.info(f"[CPA] email={email}, access_token={'有' if access_token else '空'}"
-                f"({len(access_token)}字符), user_id={getattr(account, 'user_id', '(无)')}")
+    logger.info(
+        "[CPA] credential summary email_ref=%s access_token_present=%s user_id_present=%s",
+        stable_resource_ref(email.lower()) if email else "none",
+        bool(access_token),
+        bool(getattr(account, "user_id", "")),
+    )
 
     expired_str = _format_cpa_timestamp(
         getattr(account, "expired", None) or getattr(account, "expires_at", None)
@@ -108,15 +113,18 @@ def generate_token_json(account) -> dict:
         payload = _decode_jwt_payload(id_token)
         auth_info = payload.get("https://api.openai.com/auth", {})
         account_id = auth_info.get("chatgpt_account_id", "")
-        logger.info(f"[CPA] id_token chatgpt_account_id={account_id or '(空)'}")
+        logger.info("[CPA] id_token account_id_present=%s", bool(account_id))
 
     # 2) fallback: 从 access_token 解析
     if not account_id and access_token:
         payload = _decode_jwt_payload(access_token)
         auth_info = payload.get("https://api.openai.com/auth", {})
         account_id = auth_info.get("chatgpt_account_id", "")
-        logger.info(f"[CPA] access_token chatgpt_account_id={account_id or '(空)'}, "
-                     f"auth_keys={list(auth_info.keys())}")
+        logger.info(
+            "[CPA] access_token account_id_present=%s auth_key_count=%s",
+            bool(account_id),
+            len(auth_info),
+        )
     # expired 从 access_token 的 exp 计算
     if not expired_str and access_token:
         payload = _decode_jwt_payload(access_token)
@@ -147,7 +155,7 @@ def generate_token_json(account) -> dict:
                         break
                 if not account_id:
                     account_id = me.get("id", "")
-                logger.info(f"[CPA] /backend-api/me -> {account_id or '(空)'}")
+                logger.info("[CPA] /backend-api/me account_id_present=%s", bool(account_id))
         except Exception as e:
             logger.error(f"[CPA] /backend-api/me 失败: {e}")
 
@@ -171,7 +179,7 @@ def generate_token_json(account) -> dict:
                         account_id = ai2.get("chatgpt_account_id", "")
                         if account_id:
                             access_token = new_at  # 用新 token
-                            logger.info(f"[CPA] session 刷新成功: {account_id}")
+                            logger.info("[CPA] session refresh succeeded")
                             exp2 = p2.get("exp")
                             if isinstance(exp2, int) and exp2 > 0:
                                 expired_str = datetime.fromtimestamp(
@@ -230,8 +238,11 @@ def upload_to_cpa(
         "Content-Type": "application/json",
     }
 
-    logger.info(f"[CPA] 上传: email={token_data['email']}, "
-                f"account_id={token_data.get('account_id','')}")
+    logger.info(
+        "[CPA] upload email_ref=%s account_id_present=%s",
+        stable_resource_ref(str(token_data.get("email", "")).lower()),
+        bool(token_data.get("account_id")),
+    )
 
     try:
         from urllib.parse import quote

@@ -258,6 +258,46 @@ a { color: inherit; text-decoration: none; }
   box-shadow: var(--shadow-pixel);
 }
 
+@media (max-width: 640px) {
+  .xy-deck {
+    gap: 4px;
+    padding: 0 6px;
+  }
+  .xy-mark {
+    gap: 0;
+  }
+  .xy-mark > div:last-child {
+    display: none;
+  }
+  .xy-tabs {
+    overflow: visible;
+  }
+  .xy-tab {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 3px;
+    font-size: 11px;
+  }
+  .xy-tab-code {
+    display: none;
+  }
+  .xy-deck-tools {
+    gap: 0;
+  }
+  .xy-icon-btn {
+    width: 30px;
+    height: 30px;
+  }
+}
+
+@media (max-width: 360px) {
+  .xy-tab-label {
+    display: none;
+  }
+}
+
 .xy-canvas {
   flex: 1;
   min-height: 0;

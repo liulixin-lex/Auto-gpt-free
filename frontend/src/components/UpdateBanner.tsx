@@ -49,15 +49,17 @@ export default function UpdateBanner() {
   return (
     <div className="mb-4 flex items-center justify-between gap-3 border border-[var(--accent-edge)] bg-[var(--accent-soft)] px-3 py-2 text-[12px]">
       <div className="min-w-0 truncate font-[family-name:var(--font-mono)] text-[var(--text-primary)]">
-        FW UPDATE · v{info.latest.tag} available · running{' '}
-        {info.current === 'dev' ? 'dev' : info.current}
+        {t('update.banner', {
+          latest: info.latest.tag,
+          current: info.current === 'dev' ? 'dev' : info.current,
+        })}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <button
           onClick={() => info.latest?.html_url && window.open(info.latest.html_url, '_blank')}
           className="border border-[var(--accent)] bg-[var(--accent)] px-2.5 py-1 text-[11px] font-bold text-[oklch(0.14_0_0)] hover:bg-[var(--accent-hover)]"
         >
-          拉取
+          {t('update.download')}
         </button>
         <button
           onClick={handleDismiss}

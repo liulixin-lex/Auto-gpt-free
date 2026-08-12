@@ -59,15 +59,6 @@ class TaskCommandsService:
             if not current:
                 yield f"data: {json.dumps({'done': True, 'status': TASK_STATUS_FAILED, 'line': '任务不存在'}, ensure_ascii=False)}\n\n"
                 break
-            # Long-lived auto_ops session stays non-terminal forever — never "done".
-            if current.get("type") == "auto_ops" and current["status"] not in TERMINAL_TASK_STATUSES:
-                if emitted:
-                    last_stream_activity = loop.time()
-                elif loop.time() - last_stream_activity >= heartbeat_interval:
-                    yield ": ping\n\n"
-                    last_stream_activity = loop.time()
-                await asyncio.sleep(0.5)
-                continue
             if current["status"] in TERMINAL_TASK_STATUSES:
                 if items:
                     await asyncio.sleep(0)
@@ -82,7 +73,7 @@ class TaskCommandsService:
                         line = current.get("error") or "任务失败"
                     else:
                         line = "任务已完成"
-                    yield f"data: {json.dumps({'done': True, 'status': current['status'], 'line': line}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'done': True, 'status': current['status'], 'kind': 'summary', 'schema_version': 2, 'line': line}, ensure_ascii=False)}\n\n"
                 break
             if emitted:
                 last_stream_activity = loop.time()

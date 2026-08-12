@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, shell } = require('electron')
 const { spawn } = require('child_process')
+const fs = require('fs')
 const path = require('path')
 const http = require('http')
 const { autoUpdater } = require('electron-updater')
@@ -27,11 +28,32 @@ function startBackend() {
   }
 
   const backendPath = getBackendPath()
+  const userDataPath = app.getPath('userData')
+  const databasePath = path.join(userDataPath, 'account_manager.db').replace(/\\/g, '/')
+  const artifactPath = path.join(userDataPath, 'registration-artifacts')
+  const bundledGeoipPath = path.join(process.resourcesPath, 'camoufox-geoip')
+  const writableGeoipPath = path.join(userDataPath, 'camoufox-geoip')
+  if (!fs.existsSync(writableGeoipPath) && fs.existsSync(bundledGeoipPath)) {
+    fs.cpSync(bundledGeoipPath, writableGeoipPath, { recursive: true })
+  }
+  const camoufoxExecutable = path.join(
+    process.resourcesPath,
+    'camoufox-browser',
+    process.platform === 'win32' ? 'camoufox.exe' : 'Camoufox.app/Contents/MacOS/camoufox',
+  )
   console.log('[backend] 启动:', backendPath)
 
   backendProcess = spawn(backendPath, [], {
     cwd: path.join(process.resourcesPath, 'backend', 'backend'),
-    env: { ...process.env, PORT: String(PORT) },
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      ACCOUNT_MANAGER_DATABASE_URL: `sqlite:///${databasePath}`,
+      REGISTRATION_ARTIFACT_DIR: artifactPath,
+      CAMOUFOX_EXECUTABLE_PATH: camoufoxExecutable,
+      CAMOUFOX_ADDON_PATH: path.join(process.resourcesPath, 'camoufox-addons', 'UBO'),
+      CAMOUFOX_GEOIP_DIR: writableGeoipPath,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 

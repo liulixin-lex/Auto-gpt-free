@@ -36,11 +36,11 @@ labels: bug
 
 - **OS**: <!-- macOS 14 / Windows 11 / Ubuntu 22.04 -->
 - **Python**: <!-- 3.11 / 3.12 -->
-- **Node**: <!-- 18 / 20 -->
-- **版本 / Version**: <!-- v1.0.6 / desktop / docker / source -->
+- **Node**: <!-- 22 -->
+- **版本 / Version**: <!-- v2.0.0 / desktop / docker / source -->
 - **执行模式 / Mode**: <!-- protocol / headless / headed -->
 - **代理 / Proxy**: <!-- 无 / 数据中心 / 住宅 -->
-- **平台 / Platform**: <!-- chatgpt / cursor / kiro / ... -->
+- **平台 / Platform**: <!-- chatgpt -->
 
 ## 其他信息 / Additional Context
 

@@ -52,10 +52,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         token = extract_bearer(request.headers.get("authorization"))
         if not token:
             token = str(request.cookies.get("_auth") or "").strip()
-        # EventSource cannot set Authorization headers; allow ?token= for log streams.
-        if not token:
-            token = str(request.query_params.get("token") or "").strip()
-
         if token and validate_session_token(token):
             return await call_next(request)
 

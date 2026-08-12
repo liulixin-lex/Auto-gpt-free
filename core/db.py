@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import UniqueConstraint, inspect
+from sqlalchemy import UniqueConstraint, event, inspect
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Field, SQLModel, Session, create_engine, select
 
 
@@ -19,11 +20,32 @@ def _default_database_url() -> str:
 
 
 DATABASE_URL = os.getenv("ACCOUNT_MANAGER_DATABASE_URL", _default_database_url())
-engine = create_engine(DATABASE_URL)
+_IS_SQLITE = DATABASE_URL.lower().startswith("sqlite")
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False, "timeout": 30} if _IS_SQLITE else {},
+    pool_pre_ping=not _IS_SQLITE,
+)
+
+
+if _IS_SQLITE:
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
 
 
 class AccountModel(SQLModel, table=True):
     __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint("platform", "email", name="uq_accounts_platform_email"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     platform: str = Field(index=True)
@@ -248,6 +270,17 @@ class TaskEventModel(SQLModel, table=True):
     level: str = "info"
     message: str = ""
     detail_json: str = "{}"
+    attempt_id: str = Field(default="", index=True)
+    seq: int = 0
+    kind: str = Field(default="log", index=True)
+    stage: str = Field(default="", index=True)
+    action: str = ""
+    event_code: str = Field(default="", index=True)
+    error_code: str = Field(default="", index=True)
+    retryable: bool = False
+    retry_index: int = 0
+    duration_ms: int = 0
+    schema_version: int = 1
     created_at: datetime = Field(default_factory=_utcnow)
 
     def get_detail(self) -> dict:
@@ -255,6 +288,103 @@ class TaskEventModel(SQLModel, table=True):
 
     def set_detail(self, data: dict):
         self.detail_json = json.dumps(data or {}, ensure_ascii=False)
+
+
+class RegistrationAttemptModel(SQLModel, table=True):
+    __tablename__ = "registration_attempts"
+    __table_args__ = (
+        UniqueConstraint("task_id", "ordinal", name="uq_registration_attempt_task_ordinal"),
+    )
+
+    attempt_id: str = Field(primary_key=True)
+    task_id: str = Field(index=True)
+    ordinal: int = Field(index=True)
+    requested_mode: str = Field(default="protocol", index=True)
+    effective_mode: str = Field(default="protocol", index=True)
+    status: str = Field(default="queued", index=True)
+    current_stage: str = Field(default="prepare", index=True)
+    mail_provider: str = Field(default="", index=True)
+    proxy_ref_hash: str = Field(default="direct", index=True)
+    fingerprint_id: str = ""
+    retry_count: int = 0
+    replacement_count: int = 0
+    error_code: str = Field(default="", index=True)
+    error_stage: str = Field(default="", index=True)
+    error_message: str = ""
+    account_id: Optional[int] = Field(default=None, index=True, foreign_key="accounts.id")
+    metadata_json: str = "{}"
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    duration_ms: int = 0
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+    def get_metadata(self) -> dict:
+        return json.loads(self.metadata_json or "{}")
+
+    def set_metadata(self, data: dict) -> None:
+        self.metadata_json = json.dumps(data or {}, ensure_ascii=False)
+
+
+class ResourceLeaseModel(SQLModel, table=True):
+    __tablename__ = "resource_leases"
+
+    id: str = Field(primary_key=True)
+    resource_type: str = Field(index=True)
+    resource_id: str = Field(index=True)
+    active_key: Optional[str] = Field(default=None, unique=True, index=True)
+    owner_attempt_id: str = Field(index=True)
+    status: str = Field(default="active", index=True)
+    leased_at: datetime = Field(default_factory=_utcnow)
+    lease_until: datetime = Field(index=True)
+    heartbeat_at: datetime = Field(default_factory=_utcnow)
+    cooldown_until: Optional[datetime] = Field(default=None, index=True)
+    released_at: Optional[datetime] = None
+    metadata_json: str = "{}"
+
+    def get_metadata(self) -> dict:
+        return json.loads(self.metadata_json or "{}")
+
+    def set_metadata(self, data: dict) -> None:
+        self.metadata_json = json.dumps(data or {}, ensure_ascii=False)
+
+
+class RegistrationResourceHealthModel(SQLModel, table=True):
+    __tablename__ = "registration_resource_health"
+
+    resource_key: str = Field(primary_key=True)
+    mode: str = Field(default="protocol", index=True)
+    egress_ref: str = Field(default="direct", index=True)
+    state: str = Field(default="closed", index=True)
+    healthy_concurrency: int = 1
+    success_streak: int = 0
+    failure_streak: int = 0
+    last_error_code: str = ""
+    cooldown_until: Optional[datetime] = Field(default=None, index=True)
+    window_json: str = "[]"
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+    def get_window(self) -> list:
+        value = json.loads(self.window_json or "[]")
+        return value if isinstance(value, list) else []
+
+    def set_window(self, value: list) -> None:
+        self.window_json = json.dumps(value or [], ensure_ascii=False)
+
+
+class RegistrationArtifactModel(SQLModel, table=True):
+    __tablename__ = "registration_artifacts"
+
+    id: str = Field(primary_key=True)
+    task_id: str = Field(index=True)
+    attempt_id: str = Field(index=True)
+    artifact_type: str = Field(index=True)
+    path: str = ""
+    content_type: str = ""
+    size_bytes: int = 0
+    sha256: str = ""
+    redacted: bool = True
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class ProxyModel(SQLModel, table=True):
@@ -300,7 +430,27 @@ def save_account(account) -> 'AccountModel':
             user_id=account.user_id or "",
         )
         session.add(m)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            existing = session.exec(
+                select(AccountModel)
+                .where(AccountModel.platform == account.platform)
+                .where(AccountModel.email == account.email)
+            ).first()
+            if existing is None:
+                raise
+            existing.password = account.password
+            existing.user_id = account.user_id or ""
+            existing.updated_at = _utcnow()
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+            sync_platform_account_graph(session, existing, account)
+            session.commit()
+            session.refresh(existing)
+            return existing
         session.refresh(m)
         sync_platform_account_graph(session, m, account)
         session.commit()
@@ -372,6 +522,11 @@ def _migrate_legacy_accounts_schema() -> None:
             )
         session.commit()
 
+    if not _IS_SQLITE:
+        # PostgreSQL deployments keep legacy columns for the compatibility
+        # period; table rebuild below is intentionally SQLite-specific.
+        return
+
     with engine.begin() as connection:
         connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
         connection.exec_driver_sql(
@@ -407,7 +562,20 @@ def init_db():
     from infrastructure.provider_definitions_repository import ProviderDefinitionsRepository
 
     _migrate_legacy_accounts_schema()
+    _ensure_account_identity_index()
     _ensure_column("provider_definitions", "category", "TEXT DEFAULT ''")
+    _ensure_column("task_events", "attempt_id", "TEXT DEFAULT ''")
+    _ensure_column("task_events", "seq", "INTEGER DEFAULT 0")
+    _ensure_column("task_events", "kind", "TEXT DEFAULT 'log'")
+    _ensure_column("task_events", "stage", "TEXT DEFAULT ''")
+    _ensure_column("task_events", "action", "TEXT DEFAULT ''")
+    _ensure_column("task_events", "event_code", "TEXT DEFAULT ''")
+    _ensure_column("task_events", "error_code", "TEXT DEFAULT ''")
+    _ensure_column("task_events", "retryable", "BOOLEAN DEFAULT 0")
+    _ensure_column("task_events", "retry_index", "INTEGER DEFAULT 0")
+    _ensure_column("task_events", "duration_ms", "INTEGER DEFAULT 0")
+    _ensure_column("task_events", "schema_version", "INTEGER DEFAULT 1")
+    _ensure_column("registration_attempts", "replacement_count", "INTEGER DEFAULT 0")
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
@@ -431,6 +599,29 @@ def _ensure_column(table: str, column: str, col_type: str):
     with engine.begin() as conn:
         conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
     print(f"[DB] 已添加列 {table}.{column}")
+
+
+def _ensure_account_identity_index() -> None:
+    inspector = inspect(engine)
+    if "accounts" not in set(inspector.get_table_names()):
+        return
+    with engine.begin() as connection:
+        duplicate = connection.exec_driver_sql(
+            """
+            SELECT platform, email, COUNT(*) AS total
+            FROM accounts
+            GROUP BY platform, email
+            HAVING COUNT(*) > 1
+            LIMIT 1
+            """
+        ).first()
+        if duplicate:
+            print("[DB] 检测到历史重复账号，暂不创建账号身份唯一索引")
+            return
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_platform_email "
+            "ON accounts (platform, email)"
+        )
 
 
 def _cleanup_empty_provider_settings():

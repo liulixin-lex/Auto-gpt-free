@@ -109,13 +109,14 @@ def test_update_account(client):
     assert patch_resp.status_code == 200
 
 
-def test_filter_accounts_by_platform(client):
+def test_only_chatgpt_platform_is_accepted(client):
     _create_account(platform="chatgpt", email="a@test.com")
-    _create_account(platform="cursor", email="b@test.com")
-    resp = client.get("/api/accounts", params={"platform": "cursor"})
-    data = resp.json()
-    assert data["total"] == 1
-    assert data["items"][0]["platform"] == "cursor"
+    resp = client.get("/api/accounts", params={"platform": "chatgpt"})
+    assert resp.status_code == 200
+    assert resp.json()["items"][0]["platform"] == "chatgpt"
+
+    unsupported = client.get("/api/accounts", params={"platform": "unsupported"})
+    assert unsupported.status_code == 422
 
 
 def test_account_stats(client):
@@ -146,12 +147,13 @@ def test_account_stats(client):
 
 def test_export_routes_only_keep_supported_formats(client):
     export_paths = {
-        route.path
-        for route in client.app.routes
-        if route.path.startswith("/api/accounts/export/")
+        path
+        for path in client.get("/openapi.json").json()["paths"]
+        if path.startswith("/api/accounts/export/")
     }
     assert export_paths == {
         "/api/accounts/export/json",
+        "/api/accounts/export/sub2api",
         "/api/accounts/export/sub2api-agent-identity",
         "/api/accounts/export/cpa",
     }
@@ -233,7 +235,7 @@ def test_export_cpa_falls_back_to_stored_user_id_for_account_id():
     assert payload["refresh_token"] == "rt_fallback"
 
 
-def test_export_agent_identity_sub2api_registers_from_stored_tokens(monkeypatch):
+def test_export_agent_identity_sub2api_uses_oauth_for_free_plan():
     id_token = _make_jwt({
         "email": "identity@test.com",
         "https://api.openai.com/auth": {
@@ -253,50 +255,18 @@ def test_export_agent_identity_sub2api_registers_from_stored_tokens(monkeypatch)
         )
     )
 
-    captured = {}
-
-    def fake_register_identity(tokens, *, auth_api_base_url, codex_base_url):
-        captured["tokens"] = tokens
-        captured["auth_api_base_url"] = auth_api_base_url
-        captured["codex_base_url"] = codex_base_url
-        return {
-            "private_key_seed": base64.b64encode(b"x" * 32).decode("ascii"),
-            "agent_runtime_id": "runtime-identity",
-            "task_id": "task-identity",
-            "account_id": "acct-identity",
-            "chatgpt_user_id": "user-identity",
-            "email": "identity@test.com",
-            "plan_type": "free",
-            "chatgpt_account_is_fedramp": False,
-        }
-
-    monkeypatch.setattr(
-        "platforms.chatgpt.from_credentials.register_identity",
-        fake_register_identity,
-    )
-
     artifact = AccountExportsService(AccountsRepository()).export_chatgpt_agent_identity_sub2api(
         AccountExportSelection(platform="chatgpt", select_all=True)
     )
     payload = json.loads(artifact.content)
-    identity = payload["agent_identity"]
 
-    assert artifact.filename == "identity@test.com_agent_identity_sub2api.json"
-    assert captured["tokens"] == {
-        "access_token": access_token,
-        "id_token": id_token,
-    }
-    assert payload["auth_mode"] == "agentIdentity"
-    assert payload["OPENAI_API_KEY"] is None
+    assert artifact.filename == "identity@test.com_sub2api_oauth.json"
+    assert payload["auth_mode"] == "oauth"
     assert payload["type"] == "sub2api-data"
     assert payload["version"] == 1
     assert payload["proxies"] == []
-    assert payload["accounts"][0]["credentials"]["auth_mode"] == "agentIdentity"
+    assert payload["accounts"][0]["credentials"]["access_token"] == access_token
     assert payload["accounts"][0]["credentials"]["chatgpt_account_id"] == "acct-identity"
-    assert identity["agent_runtime_id"] == "runtime-identity"
-    assert identity["task_id"] == "task-identity"
-    assert identity["account_id"] == "acct-identity"
-    assert identity["agent_private_key"]
 
 
 def test_export_agent_identity_sub2api_falls_back_to_access_token_claims(monkeypatch):
@@ -351,7 +321,7 @@ def test_export_agent_identity_sub2api_falls_back_to_access_token_claims(monkeyp
     assert payload["accounts"][0]["credentials"]["auth_mode"] == "agentIdentity"
 
 
-def test_export_agent_identity_sub2api_requires_identity_claims():
+def test_export_agent_identity_sub2api_falls_back_when_identity_claims_are_missing():
     save_account(
         Account(
             platform="chatgpt",
@@ -362,11 +332,11 @@ def test_export_agent_identity_sub2api_requires_identity_claims():
     )
 
     service = AccountExportsService(AccountsRepository())
-    try:
-        service.export_chatgpt_agent_identity_sub2api(
-            AccountExportSelection(platform="chatgpt", select_all=True)
-        )
-    except ValueError as exc:
-        assert "claims" in str(exc)
-    else:
-        raise AssertionError("OAuth tokens without identity claims should be rejected")
+    artifact = service.export_chatgpt_agent_identity_sub2api(
+        AccountExportSelection(platform="chatgpt", select_all=True)
+    )
+    payload = json.loads(artifact.content)
+
+    assert artifact.filename == "missing-claims@test.com_sub2api_oauth.json"
+    assert payload["auth_mode"] == "oauth"
+    assert "claims" in payload["_warning"]

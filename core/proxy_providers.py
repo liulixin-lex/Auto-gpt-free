@@ -100,3 +100,13 @@ def get_dynamic_proxy(extra: dict | None = None) -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+def has_dynamic_proxy_config() -> bool:
+    """Return whether an enabled dynamic provider exists without consuming an IP."""
+    try:
+        from infrastructure.provider_settings_repository import ProviderSettingsRepository
+
+        return any(item.enabled for item in ProviderSettingsRepository().list_enabled("proxy"))
+    except Exception:
+        return False

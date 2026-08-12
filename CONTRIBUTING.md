@@ -1,6 +1,6 @@
 # 参与贡献
 
-感谢你对 aBaiAutoplus 的关注！欢迎提交 Issue 和 Pull Request。
+感谢你对 Auto-gpt-free 的关注！欢迎提交 Issue 和 Pull Request。
 
 ## 开发环境
 
@@ -33,12 +33,9 @@ pytest tests/test_api_health.py -v
 - `test:` 测试
 - `chore:` 构建/工具
 
-## 添加新平台
+## 项目边界
 
-1. 在 `platforms/` 下新建目录
-2. 实现 `plugin.py`（继承 `BasePlatform`，用 `@register` 装饰器注册）
-3. 实现 `browser_register.py`（浏览器注册逻辑）
-6. 添加对应的测试
+当前项目只维护 ChatGPT 注册、检测和账号管理。新增邮箱、验证码或代理 Provider 时，请保持现有契约和测试覆盖；不再接入其他账号平台。
 
 ## 代码风格
 

@@ -8,7 +8,6 @@ from application.tasks import _run_single_account_check
 from core.account_graph import patch_account_graph
 from core.base_platform import RegisterConfig
 from core.db import AccountModel, AccountOverviewModel, engine
-from core.lifecycle import check_accounts_validity
 from core.proxy_pool import proxy_pool
 from platforms.chatgpt import subscription
 from platforms.chatgpt.plugin import ChatGPTPlatform
@@ -20,14 +19,6 @@ class _AlwaysValidPlatform:
 
     def check_valid(self, account) -> bool:
         return True
-
-
-class _AlwaysInvalidPlatform:
-    def __init__(self, config: RegisterConfig | None = None):
-        self.config = config
-
-    def check_valid(self, account) -> bool:
-        return False
 
 
 def _create_account(*, platform: str = "chatgpt", lifecycle_status: str = "registered") -> int:
@@ -65,20 +56,6 @@ def test_single_account_check_recovers_previously_invalid_account(monkeypatch):
     assert overview.lifecycle_status == "registered"
     assert overview.validity_status == "valid"
     assert overview.display_status == "registered"
-    assert overview.checked_at
-
-
-def test_lifecycle_validity_check_does_not_overwrite_lifecycle_status(monkeypatch):
-    account_id = _create_account(lifecycle_status="registered")
-    monkeypatch.setattr("core.lifecycle.get", lambda _platform: _AlwaysInvalidPlatform)
-
-    results = check_accounts_validity(platform="chatgpt", limit=10)
-
-    assert results["invalid"] == 1
-    overview = _overview(account_id)
-    assert overview.lifecycle_status == "registered"
-    assert overview.validity_status == "invalid"
-    assert overview.display_status == "invalid"
     assert overview.checked_at
 
 

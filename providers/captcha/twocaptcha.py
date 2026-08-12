@@ -1,4 +1,6 @@
 """2Captcha — cloud Turnstile solver."""
+from urllib.parse import unquote, urlsplit
+
 from core.base_captcha import BaseCaptcha
 from providers.registry import register_provider
 
@@ -16,19 +18,75 @@ class TwoCaptcha(BaseCaptcha):
             raise RuntimeError("2Captcha Key 未配置")
         return cls(api_key)
 
-    def solve_turnstile(self, page_url: str, site_key: str) -> str:
+    @staticmethod
+    def _turnstile_payload(
+        page_url: str,
+        site_key: str,
+        *,
+        proxy_url: str | None,
+        user_agent: str,
+        action: str = "",
+        cdata: str = "",
+        pagedata: str = "",
+    ) -> dict:
+        payload = {
+            "method": "turnstile",
+            "sitekey": site_key,
+            "pageurl": page_url,
+            "json": 1,
+        }
+        raw_proxy = str(proxy_url or "").strip()
+        if raw_proxy:
+            parsed = urlsplit(raw_proxy if "://" in raw_proxy else f"http://{raw_proxy}")
+            if not parsed.hostname or not parsed.port:
+                raise ValueError("Turnstile proxy must include host and port")
+            credentials = ""
+            if parsed.username:
+                credentials = unquote(parsed.username)
+                if parsed.password:
+                    credentials += f":{unquote(parsed.password)}"
+                credentials += "@"
+            payload["proxy"] = f"{credentials}{parsed.hostname}:{parsed.port}"
+            payload["proxytype"] = parsed.scheme.upper().replace("SOCKS5H", "SOCKS5")
+        if user_agent:
+            payload["userAgent"] = user_agent
+        if action:
+            payload["action"] = action
+        if cdata:
+            payload["data"] = cdata
+        if pagedata:
+            payload["pagedata"] = pagedata
+        return payload
+
+    def solve_turnstile(
+        self,
+        page_url: str,
+        site_key: str,
+        *,
+        proxy_url: str | None = None,
+        user_agent: str = "",
+        timeout_seconds: float = 180.0,
+        action: str = "",
+        cdata: str = "",
+        pagedata: str = "",
+        attempt_id: str = "",
+    ) -> str:
         import time
         import requests
 
+        request_payload = self._turnstile_payload(
+            page_url,
+            site_key,
+            proxy_url=proxy_url,
+            user_agent=user_agent,
+            action=action,
+            cdata=cdata,
+            pagedata=pagedata,
+        )
+        request_payload["key"] = self.api_key
         create = requests.post(
             f"{self.api}/in.php",
-            data={
-                "key": self.api_key,
-                "method": "turnstile",
-                "sitekey": site_key,
-                "pageurl": page_url,
-                "json": 1,
-            },
+            data=request_payload,
             timeout=30,
         )
         create.raise_for_status()
@@ -39,8 +97,9 @@ class TwoCaptcha(BaseCaptcha):
         if not task_id:
             raise RuntimeError(f"2Captcha 未返回任务 ID: {payload}")
 
-        for _ in range(60):
-            time.sleep(3)
+        deadline = time.monotonic() + max(float(timeout_seconds), 1.0)
+        while time.monotonic() < deadline:
+            time.sleep(min(3.0, max(deadline - time.monotonic(), 0.01)))
             result = requests.get(
                 f"{self.api}/res.php",
                 params={
@@ -104,10 +163,6 @@ class TwoCaptcha(BaseCaptcha):
 
     def solve_hcaptcha(self, page_url: str, site_key: str) -> str:
         """求解 hCaptcha (proxyless)。
-
-        **PayPal 实战背景**：``paypal.com/pay/`` 的 Security Challenge 嵌的是
-        hCaptcha (sitekey ``bf07db68-...``)，YesCaptcha 没给该 sitekey 开白名
-        单时返回 ``ERROR_DOMAIN_NOT_ALLOWED``——给用户提供 2Captcha 作为备选 provider。
 
         2Captcha 接口：``method=hcaptcha`` + ``sitekey`` + ``pageurl``，token
         从 ``request`` 字段返回（与 Turnstile / reCAPTCHA 路径同结构）。

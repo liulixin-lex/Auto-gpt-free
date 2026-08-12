@@ -15,8 +15,7 @@ quart>=0.19.0
 rich>=13.0.0
 pyinstaller>=6.0.0
 tls-client>=1.0.0
-# httpx[socks] —— GoPay App 纯协议注册用 httpx.Client；socks extra（socksio）
-# 是走 socks5h 印尼代理过 WAF 的必需依赖，缺了会报 "socks5h is not supported"。
+# ChatGPT 协议注册与代理连通性检查使用 httpx；socks extra 提供 socks5h 支持。
 httpx[socks]>=0.27.0
 
 # Testing

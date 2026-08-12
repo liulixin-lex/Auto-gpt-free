@@ -11,7 +11,7 @@ import {
 export type LiveJob = {
   taskId: string
   title: string
-  source: 'register' | 'action' | 'batch' | 'ops' | 'other'
+  source: 'register' | 'batch' | 'other'
   startedAt: number
   status?: string | null
   autoDownloadAgentIdentity?: boolean
@@ -48,7 +48,11 @@ function loadJobs(): LiveJob[] {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed)
+      ? parsed.filter((item) =>
+          ['register', 'batch', 'other'].includes(String(item?.source || '')),
+        )
+      : []
   } catch {
     return []
   }
@@ -149,14 +153,7 @@ export function LiveJobsProvider({ children }: { children: ReactNode }) {
       const toHide: string[] = []
       const kept: LiveJob[] = []
       for (const item of prev) {
-        // Keep live auto-ops session + any non-terminal work
-        const keepOpsLive =
-          item.source === 'ops' &&
-          (!item.status ||
-            ['running', 'claimed', 'pending', 'cancel_requested'].includes(
-              item.status,
-            ))
-        if (keepOpsLive || !isTerminalStatus(item.status)) {
+        if (!isTerminalStatus(item.status)) {
           kept.push(item)
         } else {
           toHide.push(item.taskId)

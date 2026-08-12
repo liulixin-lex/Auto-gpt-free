@@ -19,7 +19,7 @@ class TaskRuntime:
     def __init__(
         self,
         *,
-        # Allow register + auto_ops + check to run without starving each other.
+        # Allow registration and checks to run without starving each other.
         max_parallel_tasks: int = 6,
         max_parallel_per_platform: int = 2,
         poll_interval: float = 0.25,

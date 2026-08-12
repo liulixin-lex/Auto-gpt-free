@@ -19,7 +19,7 @@ services:
   # Cloudflare challenge helper — app calls http://flaresolverr:8191/v1
   # UI Settings → 稳定出口 → Clearance=FlareSolverr → 地址填下方同一 URL
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: ghcr.io/flaresolverr/flaresolverr:v3.4.6
     environment:
       - LOG_LEVEL=info
       - TZ=Asia/Shanghai

@@ -60,23 +60,23 @@ export default function Dashboard() {
 
       <div className="xy-strip">
         <div>
-          <div className="xy-k">概览</div>
-          <h1 className="xy-h1">号池概览</h1>
+          <div className="xy-k">{t('dashboard.pageKicker')}</div>
+          <h1 className="xy-h1">{t('dashboard.pageTitle')}</h1>
           <p className="xy-sub">
-            查看账号总量、可用数和失效数。注册与检测请到号池页操作。
+            {t('dashboard.pageSubtitle')}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={load} disabled={loading}>
           <RefreshCw className={`mr-2 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-          刷新
+          {t('dashboard.refresh')}
         </Button>
       </div>
 
       <section className="xy-runbar">
         <div>
-          <div className="xy-runbar-title">快捷入口</div>
+          <div className="xy-runbar-title">{t('dashboard.quickEntry')}</div>
           <div className="xy-runbar-desc">
-            建议先在设置里配好邮箱和打码，再到号池注册或检测。
+            {t('dashboard.quickEntryDesc')}
           </div>
           <div className="xy-runbar-actions">
             <Link
@@ -84,70 +84,70 @@ export default function Dashboard() {
               className="inline-flex h-9 items-center gap-2 border-2 border-[var(--accent)] bg-[var(--accent)] px-3.5 text-[12px] font-bold text-[#04140f] hover:bg-[var(--accent-hover)]"
             >
               <Play className="h-3.5 w-3.5" />
-              开始注册
+              {t('dashboard.startRegister')}
             </Link>
             <Link
               to="/accounts/chatgpt?mode=library"
               className="inline-flex h-9 items-center gap-2 border-2 border-[var(--border)] bg-[var(--bg-pane)] px-3.5 text-[12px] font-semibold text-[var(--text-secondary)] hover:border-[var(--accent-edge)]"
             >
               <ListTree className="h-3.5 w-3.5" />
-              打开号池
+              {t('dashboard.openPool')}
             </Link>
             <Link
               to="/settings?tab=mailbox"
               className="inline-flex h-9 items-center gap-2 border-2 border-[var(--border)] bg-[var(--bg-pane)] px-3.5 text-[12px] font-semibold text-[var(--text-secondary)] hover:border-[var(--accent-edge)]"
             >
               <Wrench className="h-3.5 w-3.5" />
-              邮箱 / 打码
+              {t('dashboard.mailboxCaptcha')}
             </Link>
           </div>
         </div>
         <div className="xy-runbar-side">
           <div className="xy-kv">
-            <span>状态</span>
-            <span>{loading ? '读取中' : '就绪'}</span>
+            <span>{t('dashboard.status')}</span>
+            <span>{loading ? t('dashboard.reading') : t('dashboard.ready')}</span>
           </div>
           <div className="xy-kv">
-            <span>平台数</span>
+            <span>{t('dashboard.platformCount')}</span>
             <span>{platformEntries.length || '—'}</span>
           </div>
           <div className="xy-kv">
-            <span>失效占比</span>
+            <span>{t('dashboard.invalidRate')}</span>
             <span>{stats ? `${faultRate}%` : '—'}</span>
           </div>
         </div>
       </section>
 
-      <section className="xy-panel" aria-label="pool inventory">
+      <section className="xy-panel" aria-label={t('dashboard.inventory')}>
         <div className="xy-panel-h">
-          <h2 className="xy-panel-t">库存统计</h2>
+          <h2 className="xy-panel-t">{t('dashboard.inventory')}</h2>
           <span className="xy-lamp xy-lamp-accent">
-            {stats ? `共 ${total}` : '…'}
+            {stats ? `${t('dashboard.total')} ${total}` : '…'}
           </span>
         </div>
         <div className="xy-panel-b space-y-5">
           <div className="xy-meters !grid-cols-3">
             <div className="xy-meter" data-lit="accent">
-              <div className="xy-meter-l">总量</div>
+              <div className="xy-meter-l">{t('dashboard.total')}</div>
               <div className="xy-meter-v">{stats ? total : '—'}</div>
-              <div className="xy-meter-f">在库账号</div>
+              <div className="xy-meter-f">{t('dashboard.inPool')}</div>
             </div>
             <div className="xy-meter" data-lit="ok">
-              <div className="xy-meter-l">可用</div>
+              <div className="xy-meter-l">{t('dashboard.available')}</div>
               <div className="xy-meter-v">{stats ? active : '—'}</div>
-              <div className="xy-meter-f">非失效账号</div>
+              <div className="xy-meter-f">{t('dashboard.nonInvalid')}</div>
             </div>
             <div className="xy-meter" data-lit="danger">
-              <div className="xy-meter-l">失效</div>
+              <div className="xy-meter-l">{t('dashboard.invalidCount')}</div>
               <div className="xy-meter-v">{stats ? fault : '—'}</div>
-              <div className="xy-meter-f">失效 + 过期</div>
+              <div className="xy-meter-f">{t('dashboard.invalidExpired')}</div>
             </div>
           </div>
 
           <div className="xy-grid-2">
             <div className="space-y-2">
               <div className="font-[family-name:var(--font-mono)] text-[11px] text-[var(--text-muted)]">
-                状态分布
+                {t('dashboard.statusDistribution')}
               </div>
               {stats && bucketRows.length > 0 ? (
                 bucketRows.map(({ key, count }) => {
@@ -192,7 +192,7 @@ export default function Dashboard() {
 
             <div className="space-y-2">
               <div className="font-[family-name:var(--font-mono)] text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
-                平台占比
+                {t('dashboard.platformShare')}
               </div>
               {platformEntries.length > 0 ? (
                 platformEntries.map(([platform, count]) => {

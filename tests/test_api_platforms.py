@@ -8,9 +8,7 @@ def test_list_platforms(client):
     data = resp.json()
     assert isinstance(data, list)
     names = [p["name"] for p in data]
-    # At least the core platforms should be loaded
-    assert "chatgpt" in names
-    assert "cursor" in names
+    assert names == ["chatgpt"]
 
 
 def test_platform_has_required_fields(client):

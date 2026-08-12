@@ -38,6 +38,17 @@ def _to_event(data: dict) -> TaskEvent:
         level=data.get("level", "info"),
         message=data.get("message", ""),
         line=data.get("line", ""),
+        kind=data.get("kind", data.get("type", "log")),
+        attempt_id=data.get("attempt_id", ""),
+        seq=int(data.get("seq", 0) or 0),
+        stage=data.get("stage", ""),
+        action=data.get("action", ""),
+        event_code=data.get("event_code", ""),
+        error_code=data.get("error_code", ""),
+        retryable=bool(data.get("retryable", False)),
+        retry_index=int(data.get("retry_index", 0) or 0),
+        duration_ms=int(data.get("duration_ms", 0) or 0),
+        schema_version=int(data.get("schema_version", 1) or 1),
         detail=dict(data.get("detail", {}) or {}),
         created_at=ensure_utc_datetime(data.get("created_at")),
     )
@@ -55,8 +66,21 @@ class TasksReadRepository:
         since: int = 0,
         limit: int = 200,
         tail: bool = False,
+        attempt_id: str = "",
+        stage: str = "",
+        level: str = "",
+        error_code: str = "",
     ) -> list[TaskEvent]:
         return [
             _to_event(item)
-            for item in list_task_events(task_id, since=since, limit=limit, tail=tail)
+            for item in list_task_events(
+                task_id,
+                since=since,
+                limit=limit,
+                tail=tail,
+                attempt_id=attempt_id,
+                stage=stage,
+                level=level,
+                error_code=error_code,
+            )
         ]

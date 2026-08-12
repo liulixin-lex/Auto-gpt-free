@@ -295,7 +295,11 @@ class AccountsRepository:
 
     def stats(self) -> AccountStats:
         with Session(engine) as session:
-            accounts = session.exec(select(AccountModel).order_by(AccountModel.created_at.desc(), AccountModel.id.desc())).all()
+            accounts = session.exec(
+                select(AccountModel)
+                .where(AccountModel.platform == "chatgpt")
+                .order_by(AccountModel.created_at.desc(), AccountModel.id.desc())
+            ).all()
             records = self._load_records(session, accounts)
         stats = compute_account_stats(
             [{"display_status": item.display_status} for item in records],

@@ -4,7 +4,19 @@ from abc import ABC, abstractmethod
 
 class BaseCaptcha(ABC):
     @abstractmethod
-    def solve_turnstile(self, page_url: str, site_key: str) -> str:
+    def solve_turnstile(
+        self,
+        page_url: str,
+        site_key: str,
+        *,
+        proxy_url: str | None = None,
+        user_agent: str = "",
+        timeout_seconds: float = 180.0,
+        action: str = "",
+        cdata: str = "",
+        pagedata: str = "",
+        attempt_id: str = "",
+    ) -> str:
         """返回 Turnstile token"""
         ...
 
@@ -18,16 +30,7 @@ class BaseCaptcha(ABC):
         raise NotImplementedError("当前验证码 provider 不支持 reCAPTCHA v2")
 
     def solve_hcaptcha(self, page_url: str, site_key: str) -> str:
-        """返回 hCaptcha token。
-
-        **PayPal 实战需要**：``paypal.com/pay/`` 风控页用的是 hCaptcha
-        (siteKey 含在 ``paypalobjects.com/.../hcaptcha/hcaptcha_fph.html?siteKey=...``
-        wrapper iframe URL 上)。``YesCaptcha`` / ``TwoCaptcha`` provider 都已经
-        实现该方法；老 provider 如 ``ManualCaptcha`` / ``LocalSolverCaptcha``
-        会落到这个默认实现并抛 ``NotImplementedError``——上层 ``payment.py`` 的
-        ``_try_solve_detected_security_challenge`` 把它当普通错误处理（return
-        False，进入手动等待 fallback）。
-        """
+        """返回 hCaptcha token；不支持该类型的 provider 走默认异常。"""
         raise NotImplementedError("当前验证码 provider 不支持 hCaptcha")
 
 

@@ -30,12 +30,12 @@ def test_yescaptcha_solves_recaptcha_v2_with_proxyless_task(monkeypatch):
 
     solver = YesCaptcha("client-key")
 
-    assert solver.solve_recaptcha_v2("https://paypal.test/signup", "site-key") == "recaptcha-token"
+    assert solver.solve_recaptcha_v2("https://chatgpt.test/signup", "site-key") == "recaptcha-token"
     assert calls[0][2]["json"] == {
         "clientKey": "client-key",
         "task": {
             "type": "RecaptchaV2TaskProxyless",
-            "websiteURL": "https://paypal.test/signup",
+            "websiteURL": "https://chatgpt.test/signup",
             "websiteKey": "site-key",
         },
     }

@@ -14,12 +14,32 @@ class LocalSolverCaptcha(BaseCaptcha):
     def from_config(cls, config: dict) -> 'LocalSolverCaptcha':
         return cls(str(config.get("solver_url", "") or ""))
 
-    def solve_turnstile(self, page_url: str, site_key: str) -> str:
+    def solve_turnstile(
+        self,
+        page_url: str,
+        site_key: str,
+        *,
+        proxy_url: str | None = None,
+        user_agent: str = "",
+        timeout_seconds: float = 180.0,
+        action: str = "",
+        cdata: str = "",
+        pagedata: str = "",
+        attempt_id: str = "",
+    ) -> str:
         import requests, time
         # 提交任务
-        r = requests.get(
+        r = requests.post(
             f"{self.solver_url}/turnstile",
-            params={"url": page_url, "sitekey": site_key},
+            json={
+                "url": page_url,
+                "sitekey": site_key,
+                "proxy": str(proxy_url or ""),
+                "useragent": str(user_agent or ""),
+                "action": str(action or ""),
+                "cdata": str(cdata or ""),
+                "pagedata": str(pagedata or ""),
+            },
             timeout=15,
         )
         r.raise_for_status()
@@ -27,8 +47,9 @@ class LocalSolverCaptcha(BaseCaptcha):
         if not task_id:
             raise RuntimeError(f"LocalSolver 未返回 taskId: {r.text}")
         # 轮询结果
-        for _ in range(60):
-            time.sleep(2)
+        deadline = time.monotonic() + max(float(timeout_seconds), 1.0)
+        while time.monotonic() < deadline:
+            time.sleep(min(2.0, max(deadline - time.monotonic(), 0.01)))
             res = requests.get(
                 f"{self.solver_url}/result",
                 params={"id": task_id},

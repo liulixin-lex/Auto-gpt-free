@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getPlatforms } from '@/lib/app-data'
 import { apiFetch, cn } from '@/lib/utils'
-import { formatDateTime, translateAccountStatus } from '@/lib/i18n'
+import { formatDateTime, localizeEventMessage, translateAccountStatus } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n-context'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,7 +38,6 @@ import {
   ImportModal,
   ExportMenu,
   ActionMenu,
-  ActionResultModal,
 } from '@/features/accounts/modals'
 import { useLiveJobs } from '@/lib/live-jobs'
 import { TaskLogPanel } from '@/components/tasks/TaskLogPanel'
@@ -82,7 +81,6 @@ export default function Accounts() {
   const [showRegister, setShowRegister] = useState(false)
   const [platformsMap, setPlatformsMap] = useState<Record<string, any>>({})
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const [actionResult, setActionResult] = useState<{ title: string; payload: any } | null>(null)
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [batchRefreshing, setBatchRefreshing] = useState(false)
 
@@ -187,7 +185,7 @@ export default function Accounts() {
     return ''
   }
 
-  // 号池右侧只展示检测类任务；注册/其它动作去「任务日志」
+  // Keep account-check jobs in the side dock; registration jobs live on the Jobs page.
   const checkJobs = jobs.filter((j) => j.source === 'batch')
   const activeCheck =
     checkJobs.find((j) => j.taskId === activeTaskId) || checkJobs[0] || null
@@ -216,7 +214,7 @@ export default function Accounts() {
         setMode('library')
       }
     } catch (e: any) {
-      window.alert(e?.message || '检测请求失败')
+      window.alert(localizeEventMessage(e?.message || t('accounts.checkRequestFailed'), language))
     } finally {
       setBatchRefreshing(false)
     }
@@ -253,13 +251,6 @@ export default function Accounts() {
           onDone={() => load()}
         />
       )}
-      {actionResult && (
-        <ActionResultModal
-          title={actionResult.title}
-          payload={actionResult.payload}
-          onClose={() => setActionResult(null)}
-        />
-      )}
 
       <div className="xy-strip">
         <div>
@@ -286,22 +277,20 @@ export default function Accounts() {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <span className="xy-lamp">号池 {total}</span>
-        {visibleTrial > 0 && <span className="xy-lamp xy-lamp-warn">试用 {visibleTrial}</span>}
+        <span className="xy-lamp">{t('accounts.poolBadge', { count: total })}</span>
+        {visibleTrial > 0 && <span className="xy-lamp xy-lamp-warn">{t('accounts.trialBadge', { count: visibleTrial })}</span>}
         {visibleSubscribed > 0 && (
-          <span className="xy-lamp xy-lamp-ok">已订阅 {visibleSubscribed}</span>
+          <span className="xy-lamp xy-lamp-ok">{t('accounts.subscribedBadge', { count: visibleSubscribed })}</span>
         )}
         {visibleInvalid > 0 && (
-          <span className="xy-lamp xy-lamp-danger">失效 {visibleInvalid}</span>
+          <span className="xy-lamp xy-lamp-danger">{t('accounts.invalidBadge', { count: visibleInvalid })}</span>
         )}
         {selectedCount > 0 && (
-          <span className="xy-lamp xy-lamp-cyan">已选 {selectedCount}</span>
+          <span className="xy-lamp xy-lamp-cyan">{t('accounts.selectedBadge', { count: selectedCount })}</span>
         )}
         {(() => {
           const reg = jobs.filter((j) => j.source === 'register').length
-          const ops = jobs.filter((j) => j.source === 'ops').length
           const chk = jobs.filter((j) => j.source === 'batch').length
-          const act = jobs.filter((j) => j.source === 'action').length
           const run = jobs.filter(
             (j) =>
               !j.status ||
@@ -309,11 +298,9 @@ export default function Accounts() {
           ).length
           return (
             <>
-              {run > 0 && <span className="xy-lamp xy-lamp-mag">执行中 {run}</span>}
-              {ops > 0 && <span className="xy-lamp xy-lamp-accent">运维 {ops}</span>}
-              {reg > 0 && <span className="xy-lamp xy-lamp-ok">注册 {reg}</span>}
-              {chk > 0 && <span className="xy-lamp xy-lamp-warn">检测 {chk}</span>}
-              {act > 0 && <span className="xy-lamp xy-lamp-cyan">动作 {act}</span>}
+              {run > 0 && <span className="xy-lamp xy-lamp-mag">{t('accounts.runningBadge', { count: run })}</span>}
+              {reg > 0 && <span className="xy-lamp xy-lamp-ok">{t('accounts.registerBadge', { count: reg })}</span>}
+              {chk > 0 && <span className="xy-lamp xy-lamp-warn">{t('accounts.checkBadge', { count: chk })}</span>}
             </>
           )
         })()}
@@ -322,32 +309,32 @@ export default function Accounts() {
       {mode === 'register' && (
         <section className="xy-runbar">
           <div>
-            <div className="xy-runbar-title">注册账号</div>
+            <div className="xy-runbar-title">{t('accounts.registerTitle')}</div>
             <div className="xy-runbar-desc">
-              填写数量、邮箱通道和执行方式后开始。进度与日志在右侧实时显示。
+              {t('accounts.registerDesc')}
             </div>
             <div className="xy-runbar-actions">
               <Button onClick={() => setShowRegister(true)}>
                 <Play className="mr-2 h-3.5 w-3.5" />
-                打开注册
+                {t('accounts.openRegister')}
               </Button>
               <Button variant="outline" onClick={() => setMode('library')}>
-                返回号池
+                {t('accounts.backToPool')}
               </Button>
             </div>
           </div>
           <div className="xy-runbar-side">
             <div className="xy-kv">
-              <span>平台</span>
+              <span>{t('common.platform')}</span>
               <span>ChatGPT</span>
             </div>
             <div className="xy-kv">
-              <span>库存</span>
+              <span>{t('accounts.inventory')}</span>
               <span>{total}</span>
             </div>
             <div className="xy-kv">
-              <span>说明</span>
-              <span>成功后自动刷新</span>
+              <span>{t('accounts.description')}</span>
+              <span>{t('accounts.refreshOnSuccess')}</span>
             </div>
           </div>
         </section>
@@ -357,23 +344,23 @@ export default function Accounts() {
         <section className="space-y-3">
           <div className="xy-runbar">
             <div>
-              <div className="xy-runbar-title">导入 / 导出</div>
+              <div className="xy-runbar-title">{t('accounts.ioTitle')}</div>
               <div className="xy-runbar-desc">
-                导入：粘贴账号文本。导出：JSON / Sub2API（Agent Identity 或 OAuth 回退）/ CPA token。
+                {t('accounts.ioDesc')}
               </div>
             </div>
             <div className="xy-runbar-side">
               <div className="xy-kv">
-                <span>库存</span>
+                <span>{t('accounts.inventory')}</span>
                 <span>{total}</span>
               </div>
               <div className="xy-kv">
-                <span>已选</span>
+                <span>{t('accounts.selectedLabel')}</span>
                 <span>{selectedCount}</span>
               </div>
               <div className="xy-kv">
-                <span>筛选</span>
-                <span>{filterStatus || '全部'}</span>
+                <span>{t('accounts.filterLabel')}</span>
+                <span>{filterStatus ? translateAccountStatus(filterStatus, language) : t('accounts.all')}</span>
               </div>
             </div>
           </div>
@@ -381,28 +368,28 @@ export default function Accounts() {
           <div className="grid gap-3 md:grid-cols-2">
             <div className="xy-panel">
               <div className="xy-panel-h">
-                <h2 className="xy-panel-t">导入</h2>
+                <h2 className="xy-panel-t">{t('accounts.importTitle')}</h2>
               </div>
               <div className="xy-panel-b space-y-3">
                 <p className="text-[13px] text-[var(--text-muted)]">
-                  每行：邮箱 密码 [支付链接]
+                  {t('accounts.importFormat')}
                 </p>
                 <Button onClick={() => setShowImport(true)}>
                   <Upload className="mr-2 h-3.5 w-3.5" />
-                  粘贴导入
+                  {t('accounts.pasteImport')}
                 </Button>
               </div>
             </div>
             <div className="xy-panel">
               <div className="xy-panel-h">
-                <h2 className="xy-panel-t">导出</h2>
+                <h2 className="xy-panel-t">{t('accounts.exportTitle')}</h2>
                 <span className="xy-lamp xy-lamp-accent">
-                  {selectedCount > 0 ? `已选 ${selectedCount}` : '按当前筛选'}
+                  {selectedCount > 0 ? t('accounts.selectedBadge', { count: selectedCount }) : t('accounts.exportCurrent')}
                 </span>
               </div>
               <div className="xy-panel-b space-y-3">
                 <p className="text-[13px] text-[var(--text-muted)]">
-                  支持 json · sub2api-agent-identity · cpa
+                  {t('accounts.exportFormats')}
                 </p>
                 <ExportMenu
                   total={total}
@@ -423,7 +410,7 @@ export default function Accounts() {
             <div className="xy-ledger-tools overflow-visible">
               <input
                 type="text"
-                placeholder="搜索邮箱…"
+                placeholder={t('accounts.searchPlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="control-surface control-surface-compact min-w-[160px] flex-1 max-w-xs"
@@ -433,9 +420,9 @@ export default function Accounts() {
                 onChange={(e) => setFilterStatus(e.target.value)}
                 className="control-surface control-surface-compact appearance-none"
               >
-                <option value="">全部状态</option>
-                <option value="registered">已注册</option>
-                <option value="invalid">已失效</option>
+                <option value="">{t('accounts.allStatuses')}</option>
+                <option value="registered">{t('accounts.registered')}</option>
+                <option value="invalid">{t('accounts.invalidStatus')}</option>
               </select>
               <label className="flex items-center gap-1.5 text-[12px] text-[var(--text-muted)]">
                 <input
@@ -444,7 +431,7 @@ export default function Accounts() {
                   onChange={togglePage}
                   className="checkbox-accent"
                 />
-                本页全选
+                {t('accounts.selectAllPage')}
               </label>
               <div className="ml-auto flex flex-wrap gap-1.5">
                 <ExportMenu
@@ -459,16 +446,16 @@ export default function Accounts() {
                   disabled={batchRefreshing || loading || total === 0}
                   title={
                     selectedCount > 0
-                      ? `检测已选 ${selectedCount} 个账号`
-                      : '检测当前全部账号'
+                      ? t('accounts.checkSelectedTitle', { count: selectedCount })
+                      : t('accounts.checkAllTitle')
                   }
                   onClick={async () => {
                     const useSelection = selectedCount > 0
                     if (
                       !confirm(
                         useSelection
-                          ? `确认检测已选的 ${selectedCount} 个账号？日志在右侧显示。`
-                          : `未勾选时将检测当前平台全部账号（约 ${total} 个）。日志在右侧显示，是否继续？`,
+                          ? t('accounts.checkSelectedConfirm', { count: selectedCount })
+                          : t('accounts.checkAllConfirm', { count: total }),
                       )
                     ) {
                       return
@@ -477,13 +464,13 @@ export default function Accounts() {
                       ids: useSelection ? [...selectedIds] : undefined,
                       selectAll: !useSelection,
                       title: useSelection
-                        ? `检测已选 ${selectedCount} 个`
-                        : `检测全部 ${total} 个`,
+                        ? t('accounts.checkSelectedTask', { count: selectedCount })
+                        : t('accounts.checkAllTask', { count: total }),
                     })
                   }}
                 >
                   <Zap className={`mr-1 h-3.5 w-3.5 ${batchRefreshing ? 'animate-pulse' : ''}`} />
-                  {selectedCount > 0 ? `检测已选(${selectedCount})` : '检测全部'}
+                  {selectedCount > 0 ? t('accounts.checkSelectedButton', { count: selectedCount }) : t('accounts.checkAllButton')}
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => load()} disabled={loading}>
                   <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -514,7 +501,7 @@ export default function Accounts() {
                     }}
                   >
                     <Trash2 className="mr-1 h-3.5 w-3.5" />
-                    删除
+                    {t('common.delete')}
                   </Button>
                 )}
               </div>
@@ -524,10 +511,10 @@ export default function Accounts() {
               {accounts.length === 0 ? (
                 <div className="empty-state-panel m-6">
                   <div className="text-[14px] font-semibold text-[var(--text-primary)]">
-                    暂无账号
+                    {t('accounts.noAccounts')}
                   </div>
                   <p className="mx-auto mt-2 max-w-sm text-[13px]">
-                    可以先注册一批，或从导入页粘贴已有账号。
+                    {t('accounts.noAccountsDesc')}
                   </p>
                   <div className="mt-4 flex justify-center gap-2">
                     <Button
@@ -537,10 +524,10 @@ export default function Accounts() {
                         setShowRegister(true)
                       }}
                     >
-                      去注册
+                      {t('accounts.goRegister')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setMode('io')}>
-                      去导入
+                      {t('accounts.goImport')}
                     </Button>
                   </div>
                 </div>
@@ -556,12 +543,12 @@ export default function Accounts() {
                           className="checkbox-accent"
                         />
                       </th>
-                      <th>邮箱</th>
-                      <th>密码</th>
-                      <th>状态</th>
-                      <th>信息</th>
-                      <th>创建时间</th>
-                      <th className="text-right">操作</th>
+                      <th>{t('common.email')}</th>
+                      <th>{t('common.password')}</th>
+                      <th>{t('common.status')}</th>
+                      <th>{t('accounts.info')}</th>
+                      <th>{t('accounts.createdAt')}</th>
+                      <th className="text-right">{t('common.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -605,19 +592,19 @@ export default function Accounts() {
                             </div>
                             {verificationMailbox?.email && (
                               <div className="mt-0.5 text-[11px] text-[var(--text-muted)]">
-                                验证邮箱 · {verificationMailbox.email}
+                                {t('accounts.verificationMailbox')} · {verificationMailbox.email}
                               </div>
                             )}
                             {overview?.remote_email && overview.remote_email !== acc.email && (
                               <div className="mt-0.5 text-[11px] text-[var(--text-muted)]">
-                                远程邮箱 · {overview.remote_email}
+                                {t('accounts.remoteMailbox')} · {overview.remote_email}
                               </div>
                             )}
                             {displayBadges.length > 0 && (
                               <div className="mt-1 flex flex-wrap gap-1">
                                 {displayBadges.slice(0, 2).map((b: any, i: number) => (
                                   <span key={i} className="xy-lamp">
-                                    {b?.label}
+                                    {b?.label ? localizeEventMessage(b.label, language) : '-'}
                                   </span>
                                 ))}
                               </div>
@@ -649,7 +636,9 @@ export default function Accounts() {
                               <div className="space-y-0.5 text-[11px] text-[var(--text-muted)]">
                                 {primaryMetrics.slice(0, 2).map((m: any) => (
                                   <div key={m.key || m.label}>
-                                    <span className="text-[var(--text-secondary)]">{m.label}</span>
+                                    <span className="text-[var(--text-secondary)]">
+                                      {m.label ? localizeEventMessage(m.label, language) : '-'}
+                                    </span>
                                     : {m.value}
                                   </div>
                                 ))}
@@ -657,9 +646,9 @@ export default function Accounts() {
                             ) : (
                               <div
                                 className="truncate text-[11px] text-[var(--text-muted)]"
-                                title={getCompactStatusMeta(acc)}
+                                title={getCompactStatusMeta(acc, language)}
                               >
-                                {getCompactStatusMeta(acc)}
+                                {getCompactStatusMeta(acc, language)}
                               </div>
                             )}
                             {getCashierUrl(acc) && (
@@ -694,7 +683,7 @@ export default function Accounts() {
                                   minute: '2-digit',
                                   hour12: false,
                                 })
-                              : '—'}
+                              : t('common.unknown')}
                           </td>
                           <td
                             className="text-right"
@@ -718,16 +707,16 @@ export default function Accounts() {
           <aside className="xy-logdock">
             <div className="xy-logdock-h">
               <div>
-                <div className="xy-k">检测日志</div>
+                <div className="xy-k">{t('accounts.checkLogs')}</div>
                 <div className="mt-1 text-[13px] font-semibold">
-                  {activeCheck ? activeCheck.title : '仅显示检测任务'}
+                  {activeCheck ? localizeEventMessage(activeCheck.title, language) : t('accounts.checkTasksOnly')}
                 </div>
               </div>
               {activeCheck ? (
                 <button
                   type="button"
                   className="xy-icon-btn"
-                  title="关闭当前检测"
+                  title={t('accounts.closeCurrentCheck')}
                   onClick={() => dismissJob(activeCheck.taskId)}
                 >
                   <X className="h-3.5 w-3.5" />
@@ -751,7 +740,7 @@ export default function Accounts() {
                       <span className="shrink-0 text-[10px] text-[var(--text-muted)]">
                         {job.status
                           ? getTaskStatusText(job.status, language)
-                          : '进行中'}
+                          : t('accounts.inProgress')}
                       </span>
                     </button>
                   ))}
@@ -772,11 +761,10 @@ export default function Accounts() {
               ) : (
                 <div className="empty-state-panel">
                   <div className="text-[13px] font-semibold text-[var(--text-primary)]">
-                    暂无检测日志
+                    {t('accounts.noCheckLogs')}
                   </div>
                   <p className="mt-2 text-[12px]">
-                    点「检测全部 / 检测已选 / 行内检测」后，进度会出现在这里。
-                    注册任务请到「任务日志」查看。
+                    {t('accounts.checkLogsHint')}
                   </p>
                 </div>
               )}

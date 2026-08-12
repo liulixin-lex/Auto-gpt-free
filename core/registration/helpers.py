@@ -81,9 +81,10 @@ def _chunked_mailbox_wait(
                 raise
         if callable(cancel_check) and cancel_check():
             raise RuntimeError("任务已取消")
+    timeout_error = TimeoutError(f"等待验证码超时 ({total}s)")
     if last_error:
-        raise last_error
-    raise TimeoutError(f"等待验证码超时 ({total}s)")
+        raise timeout_error from last_error
+    raise timeout_error
 
 
 def build_otp_callback(
@@ -102,8 +103,14 @@ def build_otp_callback(
 
     cancel_check = getattr(ctx.platform, "is_cancel_requested", None)
 
+    before_ids = set(getattr(ctx.identity, "before_ids", set()) or set())
+
+    def _advance_cursor() -> None:
+        current_ids = set(mailbox.get_current_ids(mail_acct) or set())
+        before_ids.update(current_ids)
+        ctx.identity.before_ids = set(before_ids)
+
     def otp_cb():
-        before_ids = getattr(ctx.identity, "before_ids", set())
 
         def _wait(timeout: int):
             kwargs = {"keyword": keyword, "before_ids": before_ids, "timeout": timeout}
@@ -119,9 +126,14 @@ def build_otp_callback(
             log_fn=ctx.log,
         )
         if code:
-            ctx.log(f"{success_label}: {code}")
+            try:
+                _advance_cursor()
+            except Exception:
+                pass
+            ctx.log(f"{success_label}已收到")
         return code
 
+    otp_cb.advance_cursor = _advance_cursor
     return otp_cb
 
 

@@ -4,14 +4,16 @@ import json
 import random
 import re
 import secrets
+import threading
 import time
 import uuid
 from typing import Any, Callable, Optional
 from urllib.parse import urljoin, urlparse
 
-from camoufox.sync_api import Camoufox
+from domain.registration_runtime import RegistrationStage
 
-from .._browser_backend import BrowserBackendConfig, open_browser_backend
+from .browser_challenge import BrowserChallengeGuard
+from .browser_engine import CamoufoxEngine
 from .constants import (
     OPENAI_AUTH,
     CHATGPT_APP,
@@ -22,20 +24,6 @@ from .constants import (
     SENTINEL_BASE,
     OAUTH_CONSENT_FORM_SELECTOR,
 )
-
-
-CAMOUFOX_VISIBLE_WINDOW_SIZE = (1280, 720)
-
-
-def _apply_camoufox_visible_window_limit(
-    launch_opts: dict,
-    backend_config: BrowserBackendConfig,
-) -> None:
-    if not backend_config.is_camoufox:
-        return
-    if backend_config.is_headless or bool(launch_opts.get("headless")):
-        return
-    launch_opts.setdefault("window", CAMOUFOX_VISIBLE_WINDOW_SIZE)
 
 
 def _is_transient_nav_error(exc: BaseException) -> bool:
@@ -237,20 +225,6 @@ def _is_auth_timeout_retry_text(text: str) -> bool:
         AUTH_RETRY_TEXT_RE.search(value)
         and (AUTH_TIMEOUT_TITLE_RE.search(value) or AUTH_TIMEOUT_DETAIL_RE.search(value))
     )
-
-
-def _build_proxy_config(proxy: Optional[str]) -> Optional[dict]:
-    if not proxy:
-        return None
-    parsed = urlparse(proxy)
-    if not parsed.scheme or not parsed.hostname or not parsed.port:
-        return {"server": proxy}
-    config = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
-    if parsed.username:
-        config["username"] = parsed.username
-    if parsed.password:
-        config["password"] = parsed.password
-    return config
 
 
 def _wait_for_url(page, substring: str, timeout: int = 60) -> bool:
@@ -575,6 +549,23 @@ def _extract_auth_error_text(page) -> str:
     return ""
 
 
+def _classify_authentication_error_page(page) -> str:
+    try:
+        current_url = str(page.url or "").lower()
+    except Exception:
+        current_url = ""
+    try:
+        body = str(page.locator("body").inner_text(timeout=500) or "").lower()[:6000]
+    except Exception:
+        body = ""
+    combined = f"{current_url}\n{body}"
+    if "identity_provider_mismatch" in combined:
+        return "AUTH_IDENTITY_PROVIDER_MISMATCH: identity_provider_mismatch"
+    if "authentication error" in combined or "auth_error" in combined:
+        return "AUTH_SESSION_DESYNC: authentication error page"
+    return ""
+
+
 def _fill_input_like_user(page, selector: str, value: str) -> bool:
     try:
         locator = page.locator(selector).first
@@ -679,8 +670,197 @@ def _sync_hidden_birthday_input(page, birthdate: str, log) -> bool:
     except Exception:
         synced = False
     if synced:
-        log(f"about_you 已同步隐藏 birthday: {birthdate}")
+        log("about_you 已同步隐藏 birthday")
     return synced
+
+
+def _react_aria_date_values_valid(
+    *,
+    month_value: str,
+    day_value: str,
+    year_value: str,
+    hidden_value: str,
+    expected_month: str,
+    expected_day: str,
+    expected_year: str,
+) -> bool:
+    """Validate React Aria DateField segments before submitting the form."""
+    try:
+        segments_match = (
+            int(str(month_value or "0")) == int(expected_month)
+            and int(str(day_value or "0")) == int(expected_day)
+            and int(str(year_value or "0")) == int(expected_year)
+        )
+    except (TypeError, ValueError):
+        return False
+    if not segments_match:
+        return False
+    normalized_hidden = str(hidden_value or "").strip()
+    if not normalized_hidden:
+        return True
+    expected_iso = f"{int(expected_year):04d}-{int(expected_month):02d}-{int(expected_day):02d}"
+    return normalized_hidden == expected_iso
+
+
+def _fill_react_aria_date_segments(page, month: str, day: str, year: str, log) -> bool:
+    """Fill the contenteditable React Aria DateField used by about-you.
+
+    The birthday control is not made of ``input`` elements.  Calling
+    ``fill``/``input_value`` on its ``div[role=spinbutton]`` segments leaves
+    the visible value empty (and emits Playwright "element is not an input"
+    errors).  Use the segment keyboard contract first, then fall back to the
+    hidden form value so a minor React Aria markup change does not abort the
+    whole attempt before the server can validate the payload.
+    """
+    month_value = str(month or "").strip()
+    day_value = str(day or "").strip()
+    year_value = str(year or "").strip()
+    if not (month_value and day_value and year_value):
+        return False
+
+    try:
+        month_seg = page.locator('div[data-type="month"], input[data-type="month"]').first
+        day_seg = page.locator('div[data-type="day"], input[data-type="day"]').first
+        year_seg = page.locator('div[data-type="year"], input[data-type="year"]').first
+        if page.locator('div[data-type="month"], input[data-type="month"]').count() < 1:
+            return False
+        if page.locator('div[data-type="day"], input[data-type="day"]').count() < 1:
+            return False
+        if page.locator('div[data-type="year"], input[data-type="year"]').count() < 1:
+            return False
+    except Exception:
+        return False
+
+    def _pump(milliseconds: int = 250) -> None:
+        try:
+            page.wait_for_timeout(milliseconds)
+        except Exception:
+            time.sleep(max(milliseconds, 0) / 1000)
+
+    def _snapshot() -> tuple[str, str, str, str]:
+        def attr(locator, name: str) -> str:
+            try:
+                return str(locator.get_attribute(name) or "")
+            except Exception:
+                return ""
+
+        hidden = ""
+        try:
+            hidden = str(page.locator('input[name="birthday"]').first.input_value() or "")
+        except Exception:
+            try:
+                hidden = str(
+                    page.locator('input[name="birthday"]').first.get_attribute("value") or ""
+                )
+            except Exception:
+                pass
+        return (
+            attr(month_seg, "aria-valuenow"),
+            attr(day_seg, "aria-valuenow"),
+            attr(year_seg, "aria-valuenow"),
+            hidden,
+        )
+
+    def _valid(values: tuple[str, str, str, str]) -> bool:
+        return _react_aria_date_values_valid(
+            month_value=values[0],
+            day_value=values[1],
+            year_value=values[2],
+            hidden_value=values[3],
+            expected_month=month_value,
+            expected_day=day_value,
+            expected_year=year_value,
+        )
+
+    def _segments_match(values: tuple[str, str, str, str]) -> bool:
+        try:
+            return (
+                int(values[0] or "0") == int(month_value)
+                and int(values[1] or "0") == int(day_value)
+                and int(values[2] or "0") == int(year_value)
+            )
+        except (TypeError, ValueError):
+            return False
+
+    def _type_segment(locator, value: str) -> None:
+        locator.click(force=True)
+        _pump(80)
+        try:
+            placeholder = str(locator.get_attribute("data-placeholder") or "").lower() == "true"
+        except Exception:
+            placeholder = False
+        if not placeholder:
+            try:
+                locator.press("Control+A")
+                locator.press("Backspace")
+            except Exception:
+                page.keyboard.press("Control+A")
+                page.keyboard.press("Backspace")
+        # React Aria segments consume numeric key events; direct DOM value
+        # assignment is intentionally avoided because it bypasses DateField
+        # state and produces truncated years such as "91".
+        try:
+            locator.press_sequentially(str(value), delay=180)
+        except Exception:
+            page.keyboard.type(str(value), delay=180)
+        _pump(300)
+
+    # Try each segment independently.  Do not press Tab: React Aria already
+    # advances segments after a complete numeric value and Tab can skip the
+    # day segment on current auth builds.
+    for _attempt in range(3):
+        try:
+            _type_segment(month_seg, month_value)
+            _type_segment(day_seg, day_value)
+            _type_segment(year_seg, year_value)
+            values = _snapshot()
+            if _valid(values):
+                return True
+            # React Aria may update the hidden form input on the next render
+            # tick even after all three visible segments are already valid.
+            # Do not discard a correct segment state merely because the hidden
+            # input has not caught up yet; the submit handler will validate the
+            # final form payload and report a real 400 if it is still stale.
+            if _segments_match(values):
+                _pump(700)
+                return True
+        except Exception as exc:
+            log(f"about_you 日期分段输入重试 type={type(exc).__name__}")
+
+    # Last resort: synchronize the hidden form field using the native setter.
+    # This keeps the browser session and CSRF/device context intact while
+    # allowing the server-side form validator to make the final decision.
+    try:
+        hidden = page.locator('input[name="birthday"]').first
+        iso = f"{int(year_value):04d}-{int(month_value):02d}-{int(day_value):02d}"
+        applied = bool(
+            hidden.evaluate(
+                """
+                (input, nextValue) => {
+                  const setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value'
+                  )?.set;
+                  if (!setter) return false;
+                  setter.call(input, nextValue);
+                  input.dispatchEvent(new Event('input', { bubbles: true }));
+                  input.dispatchEvent(new Event('change', { bubbles: true }));
+                  return String(input.value || '') === String(nextValue || '');
+                }
+                """,
+                iso,
+            )
+        )
+        _pump(300)
+        if applied:
+            hidden_value = str(hidden.input_value() or "")
+            if hidden_value == iso:
+                log("about_you 已同步隐藏 Birthday 字段")
+                return True
+    except Exception as exc:
+        log(f"about_you 隐藏 Birthday 同步失败 type={type(exc).__name__}")
+
+    log("about_you 分段日期校验失败")
+    return False
 
 
 def _collect_visible_text_inputs(page) -> list[dict]:
@@ -952,7 +1132,7 @@ def _start_browser_signup_via_authorize(page, email: str, device_id: str, log) -
     if not csrf_token:
         raise RuntimeError("获取 CSRF token 失败")
 
-    log(f"提交邮箱: {email}")
+    log("提交注册邮箱")
     authorize_url = _start_browser_signin(page, email, device_id, csrf_token, log=log)
     if not authorize_url:
         raise RuntimeError("提交邮箱失败，未获取 authorize URL")
@@ -961,12 +1141,6 @@ def _start_browser_signup_via_authorize(page, email: str, device_id: str, log) -
     if not final_url:
         raise RuntimeError("访问 authorize URL 失败")
     return _derive_registration_state_from_page(page)
-
-
-def _dump_debug(page, prefix: str) -> None:
-    page.screenshot(path=f"/tmp/{prefix}.png")
-    with open(f"/tmp/{prefix}.html", "w") as f:
-        f.write(page.content())
 
 
 def _get_cookies(page) -> dict:
@@ -1243,6 +1417,154 @@ def _infer_page_type(data: dict | None, current_url: str = "") -> str:
     if "chatgpt.com" in url:
         return "chatgpt_home"
     return ""
+
+
+class AuthResponseObserver:
+    """Collect a small redacted auth-response envelope for state transitions."""
+
+    _MARKERS = (
+        "/api/accounts/",
+        "/api/auth/",
+        "/oauth/",
+        "/sign-in-with-chatgpt/",
+    )
+
+    def __init__(self, *, flow_epoch: str = "") -> None:
+        self.flow_epoch = str(flow_epoch or uuid.uuid4().hex[:12])
+        self._lock = threading.Lock()
+        self._items: list[dict[str, Any]] = []
+
+    @staticmethod
+    def _error_code(payload: dict[str, Any]) -> str:
+        error = payload.get("error")
+        if isinstance(error, dict):
+            return str(
+                error.get("code")
+                or error.get("type")
+                or error.get("error_code")
+                or ""
+            )
+        errors = payload.get("errors")
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            return str(
+                errors[0].get("code")
+                or errors[0].get("type")
+                or errors[0].get("error_code")
+                or ""
+            )
+        return str(
+            payload.get("error_code")
+            or payload.get("code")
+            or (error if isinstance(error, str) else "")
+        )
+
+    def observe(self, page) -> None:
+        page.on("response", self._on_response)
+
+    def _on_response(self, response) -> None:
+        url = str(getattr(response, "url", "") or "")
+        if not any(marker in url for marker in self._MARKERS):
+            return
+        status = int(getattr(response, "status", 0) or 0)
+        headers = {}
+        try:
+            headers = dict(getattr(response, "headers", {}) or {})
+        except Exception:
+            headers = {}
+        payload: dict[str, Any] = {}
+        content_type = str(headers.get("content-type") or "")
+        if "json" in content_type:
+            try:
+                value = response.json()
+                payload = value if isinstance(value, dict) else {}
+            except Exception:
+                payload = {}
+        page_data = payload.get("page") if isinstance(payload.get("page"), dict) else {}
+        page_type = str(page_data.get("type") or payload.get("page_type") or "")
+        continue_path = str(
+            payload.get("continue_url")
+            or headers.get("location")
+            or ""
+        )
+        if continue_path:
+            try:
+                continue_path = urlparse(continue_path).path or continue_path[:160]
+            except Exception:
+                continue_path = continue_path[:160]
+        item = {
+            "endpoint_group": next((marker.strip("/").replace("/", ".") for marker in self._MARKERS if marker in url), "auth"),
+            "http_status": status,
+            "error_code": self._error_code(payload),
+            "page_type": page_type,
+            "continue_path": continue_path,
+            "cf_mitigated": str(headers.get("cf-mitigated") or "").lower() == "challenge",
+            "flow_epoch": self.flow_epoch,
+            "at": time.monotonic(),
+        }
+        with self._lock:
+            self._items.append(item)
+            del self._items[:-40]
+
+    def latest(self, *, since: float = 0.0) -> dict[str, Any] | None:
+        with self._lock:
+            for item in reversed(self._items):
+                if float(item.get("at") or 0) >= since:
+                    return dict(item)
+        return None
+
+    def latest_error(self, *, since: float = 0.0) -> dict[str, Any] | None:
+        with self._lock:
+            for item in reversed(self._items):
+                if float(item.get("at") or 0) < since:
+                    continue
+                if (
+                    str(item.get("error_code") or "").strip()
+                    or int(item.get("http_status") or 0) >= 400
+                    or bool(item.get("cf_mitigated"))
+                ):
+                    return dict(item)
+        return None
+
+
+def _observed_auth_failure(
+    observer: AuthResponseObserver | None,
+    *,
+    since: float,
+    current_url: str,
+) -> dict[str, Any] | None:
+    observed = observer.latest_error(since=since) if observer else None
+    if not observed:
+        return None
+    raw_code = str(observed.get("error_code") or "").strip()
+    lowered = raw_code.lower()
+    http_status = int(observed.get("http_status") or 0)
+    if http_status == 429:
+        stable_code = "HTTP_RATE_LIMIT"
+    elif "identity_provider_mismatch" in lowered:
+        stable_code = "AUTH_IDENTITY_PROVIDER_MISMATCH"
+    elif bool(observed.get("cf_mitigated")):
+        stable_code = "CF_CHALLENGE"
+    elif any(
+        marker in lowered
+        for marker in (
+            "invalid_code",
+            "invalid_otp",
+            "invalid otp",
+            "invalid verification code",
+        )
+    ):
+        stable_code = "OTP_INVALID"
+    elif "session" in lowered or "state" in lowered:
+        stable_code = "AUTH_SESSION_DESYNC"
+    else:
+        stable_code = "AUTH_INVALID_STEP"
+    return {
+        "ok": False,
+        "status": http_status or 400,
+        "url": current_url,
+        "data": observed,
+        "text": f"{stable_code}: {raw_code or 'auth request failed'}",
+    }
 
 
 def _extract_flow_state(data: dict | None, current_url: str = "") -> dict:
@@ -1579,10 +1901,7 @@ def _build_browser_sentinel_token(page, device_id: str, flow: str, user_agent: s
 
 def _is_registration_complete(state: dict) -> bool:
     page_type = str(state.get("page_type") or "")
-    url = str(state.get("current_url") or state.get("continue_url") or "").lower()
-    return page_type in {"callback", "oauth_callback", "chatgpt_home"} or (
-        "chatgpt.com" in url and "redirect_uri" not in url and "about-you" not in url
-    )
+    return page_type in {"callback", "oauth_callback", "chatgpt_home"}
 
 
 def _handle_post_signup_onboarding(page, log) -> None:
@@ -1771,7 +2090,12 @@ def _browser_authorize(page, auth_url: str, log) -> str:
         return ""
 
 
-def _submit_oauth_password_direct(page, password: str, log) -> dict:
+def _submit_oauth_password_direct(
+    page,
+    password: str,
+    log,
+    auth_observer: AuthResponseObserver | None = None,
+) -> dict:
     """OAuth 流程专用：直接填密码登录，不尝试恢复到注册态。"""
     input_selector = _wait_for_any_selector(page, PASSWORD_INPUT_SELECTORS, timeout=15)
     if not input_selector:
@@ -1786,6 +2110,7 @@ def _submit_oauth_password_direct(page, password: str, log) -> dict:
     log(f"  OAuth 密码页输入框: {input_selector}")
     _browser_pause(page)
 
+    submit_started = time.monotonic()
     submit_selector = _click_first(page, PASSWORD_SUBMIT_SELECTORS, timeout=8)
     if submit_selector:
         log(f"  OAuth 密码页已点击继续按钮: {submit_selector}")
@@ -1797,6 +2122,13 @@ def _submit_oauth_password_direct(page, password: str, log) -> dict:
     deadline = time.time() + 20
     while time.time() < deadline:
         current_url = str(page.url or "")
+        observed_failure = _observed_auth_failure(
+            auth_observer,
+            since=submit_started,
+            current_url=current_url,
+        )
+        if observed_failure:
+            return observed_failure
         state = _derive_registration_state_from_page(page)
         page_type = str(state.get("page_type") or "")
         if page_type in {"email_otp_verification", "about_you", "consent", "workspace_selection",
@@ -1811,7 +2143,12 @@ def _submit_oauth_password_direct(page, password: str, log) -> dict:
     return {"ok": False, "status": 0, "url": str(page.url or ""), "data": None, "text": "OAuth 密码提交后未跳转"}
 
 
-def _submit_password_via_page(page, password: str, log) -> dict:
+def _submit_password_via_page(
+    page,
+    password: str,
+    log,
+    auth_observer: AuthResponseObserver | None = None,
+) -> dict:
     if _recover_signup_password_page(page, log):
         time.sleep(1)
 
@@ -1824,6 +2161,7 @@ def _submit_password_via_page(page, password: str, log) -> dict:
     _browser_pause(page)
 
     start_url = str(page.url or "")
+    submit_started = time.monotonic()
     submit_selector = _click_first(page, PASSWORD_SUBMIT_SELECTORS, timeout=8)
     if submit_selector:
         log(f"密码页已点击继续按钮: {submit_selector}")
@@ -1837,6 +2175,13 @@ def _submit_password_via_page(page, password: str, log) -> dict:
     while time.time() < deadline:
         current_url = str(page.url or "")
         last_url = current_url or last_url
+        observed_failure = _observed_auth_failure(
+            auth_observer,
+            since=submit_started,
+            current_url=current_url,
+        )
+        if observed_failure:
+            return observed_failure
         state = _derive_registration_state_from_page(page)
         page_type = str(state.get("page_type") or "")
         if page_type in {"email_otp_verification", "about_you", "add_phone", "oauth_callback", "chatgpt_home"}:
@@ -1863,135 +2208,312 @@ def _submit_password_via_page(page, password: str, log) -> dict:
             return {"ok": False, "status": 400, "url": current_url, "data": None, "text": "登录密码页恢复后未找到提交方式"}
         error_text = _extract_auth_error_text(page)
         if error_text:
-            _dump_debug(page, "chatgpt_password_fail")
             return {"ok": False, "status": 400, "url": current_url, "data": None, "text": error_text}
         time.sleep(0.5)
-    _dump_debug(page, "chatgpt_password_fail")
     return {"ok": False, "status": 0, "url": last_url, "data": None, "text": "密码页提交后未跳转"}
 
 
-def _submit_otp_via_page(page, code: str, log) -> dict:
+_OTP_INPUT_SELECTOR = (
+    'input[autocomplete="one-time-code"], input[name="code" i], '
+    'input[name*="otp" i], input[inputmode="numeric"], '
+    'input[type="tel"], input[type="number"]'
+)
+
+
+def _fill_otp_input(page, otp: str, log) -> dict[str, Any]:
+    errors: list[str] = []
+    diagnostics: dict[str, Any] = {
+        "ok": False,
+        "method": "none",
+        "candidates": 0,
+        "visible": 0,
+        "enabled": 0,
+    }
+    try:
+        native = page.evaluate(
+            """async ({ selector, code }) => {
+                const candidates = Array.from(document.querySelectorAll(selector));
+                const visible = candidates.filter((node) => {
+                    const style = window.getComputedStyle(node);
+                    const rect = node.getBoundingClientRect();
+                    return style.display !== 'none' && style.visibility !== 'hidden'
+                        && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+                });
+                const enabled = visible.filter((node) => !node.disabled && !node.readOnly);
+                const setValue = (node, value) => {
+                    const setter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    )?.set;
+                    if (setter) setter.call(node, value);
+                    else node.value = value;
+                    node.dispatchEvent(new Event('input', { bubbles: true }));
+                    node.dispatchEvent(new Event('change', { bubbles: true }));
+                };
+                let method = 'none';
+                let readback = '';
+                const split = enabled.length >= code.length
+                    && enabled.slice(0, code.length).every((node) => node.maxLength === 1);
+                if (split) {
+                    enabled.slice(0, code.length).forEach((node, index) => {
+                        node.focus();
+                        setValue(node, code[index]);
+                    });
+                    method = 'native-split';
+                    readback = enabled.slice(0, code.length).map((node) => node.value).join('');
+                } else if (enabled.length) {
+                    const target = enabled.find((node) => node.maxLength !== 1) || enabled[0];
+                    target.focus();
+                    setValue(target, code);
+                    method = 'native-single';
+                    readback = String(target.value || '');
+                }
+                await new Promise((resolve) => window.setTimeout(resolve, 50));
+                if (split) {
+                    readback = enabled.slice(0, code.length).map((node) => node.value).join('');
+                } else if (enabled.length) {
+                    readback = String((enabled.find((node) => node.maxLength !== 1) || enabled[0]).value || '');
+                }
+                return {
+                    ok: readback === code,
+                    method,
+                    candidates: candidates.length,
+                    visible: visible.length,
+                    enabled: enabled.length,
+                    readbackLength: readback.length,
+                };
+            }""",
+            {"selector": _OTP_INPUT_SELECTOR, "code": otp},
+        )
+        if isinstance(native, dict):
+            diagnostics.update(native)
+        if diagnostics.get("ok"):
+            log(
+                "OTP 输入完成 "
+                f"method={diagnostics.get('method')} candidates={diagnostics.get('candidates', 0)} "
+                f"visible={diagnostics.get('visible', 0)} enabled={diagnostics.get('enabled', 0)} "
+                f"code_length={len(otp)} numeric={'yes' if otp.isdigit() else 'no'}"
+            )
+            return diagnostics
+    except Exception as exc:
+        errors.append(f"native:{type(exc).__name__}")
+
+    try:
+        candidates = page.locator(_OTP_INPUT_SELECTOR)
+        count = int(candidates.count())
+        diagnostics["candidates"] = max(int(diagnostics.get("candidates") or 0), count)
+        for index in range(count):
+            target = candidates.nth(index)
+            try:
+                if not target.is_visible(timeout=1200):
+                    continue
+                diagnostics["visible"] = max(int(diagnostics.get("visible") or 0), 1)
+                if hasattr(target, "is_enabled") and not target.is_enabled(timeout=1200):
+                    continue
+                diagnostics["enabled"] = max(int(diagnostics.get("enabled") or 0), 1)
+                target.fill(otp, timeout=2000)
+                readback = str(target.input_value(timeout=1200) or "").strip()
+                if readback == otp:
+                    diagnostics.update(
+                        {"ok": True, "method": "playwright-fill", "readbackLength": len(readback)}
+                    )
+                    log(
+                        "OTP 输入完成 method=playwright-fill "
+                        f"candidates={diagnostics['candidates']} visible={diagnostics['visible']} "
+                        f"enabled={diagnostics['enabled']} code_length={len(otp)} "
+                        f"numeric={'yes' if otp.isdigit() else 'no'}"
+                    )
+                    return diagnostics
+            except Exception as exc:
+                errors.append(f"locator:{type(exc).__name__}")
+    except Exception as exc:
+        errors.append(f"locator-list:{type(exc).__name__}")
+
+    diagnostics["errors"] = sorted(set(errors))[:4]
+    log(
+        "OTP 输入失败 "
+        f"candidates={diagnostics.get('candidates', 0)} visible={diagnostics.get('visible', 0)} "
+        f"enabled={diagnostics.get('enabled', 0)} errors={','.join(diagnostics['errors']) or '-'} "
+        f"code_length={len(otp)} numeric={'yes' if otp.isdigit() else 'no'}"
+    )
+    return diagnostics
+
+
+def _submit_otp_via_page(
+    page,
+    code: str,
+    log,
+    auth_observer: AuthResponseObserver | None = None,
+) -> dict:
     otp = str(code or "").strip()
     if not otp:
         return {"ok": False, "status": 400, "url": page.url, "data": None, "text": "验证码为空"}
 
-    # 等待页面加载完成，确保 OTP 输入框已渲染
     try:
         page.wait_for_load_state("domcontentloaded", timeout=5000)
-    except Exception:
-        pass
-    time.sleep(1)
+    except Exception as exc:
+        log(f"OTP 页面加载状态未就绪 type={type(exc).__name__}")
+    time.sleep(0.5)
 
-    filled = False
+    submit_started = time.monotonic()
+    fill_result: dict[str, Any] = {}
+    captured_response = None
 
-    # 先尝试 6 格 OTP 输入框
-    try:
-        digit_inputs = page.locator(
-            "input[inputmode='numeric'], input[autocomplete='one-time-code'], input[type='tel'], input[type='number']"
+    def _is_otp_response(response) -> bool:
+        response_url = str(getattr(response, "url", "") or "")
+        return "/api/accounts/" in response_url and (
+            "otp" in response_url.lower() or "authorize" in response_url.lower()
         )
-        count = digit_inputs.count()
-        if count >= len(otp):
-            done = 0
-            for i in range(min(count, len(otp))):
-                box = digit_inputs.nth(i)
-                try:
-                    box.wait_for(state="visible", timeout=800)
-                    box.fill("")
-                    box.type(otp[i], delay=random.randint(20, 60))
-                    done += 1
-                except Exception:
-                    break
-            if done >= len(otp):
-                filled = True
-                log(f"验证码页已填写 {done} 位分格输入框")
-    except Exception:
-        pass
 
-    # 再尝试单输入框
-    if not filled:
-        otp_candidates = [
-            page.get_by_label(re.compile(r"verification code|code|otp|認証コード|確認コード|ワンタイムコード", re.IGNORECASE)),
-            page.get_by_role("textbox", name=re.compile(r"verification code|code|otp|認証コード|確認コード|ワンタイムコード", re.IGNORECASE)),
-            page.locator("input[autocomplete='one-time-code']"),
-            page.locator("input[name*='code' i]"),
-            page.locator("input[id*='code' i]"),
-            page.locator("input[type='text']"),
-            page.locator("input"),
-        ]
-        for candidate in otp_candidates:
+    expect_response = getattr(page, "expect_response", None)
+    try:
+        if callable(expect_response):
+            with expect_response(_is_otp_response, timeout=12000) as response_info:
+                fill_result = _fill_otp_input(page, otp, log)
+                if fill_result.get("ok"):
+                    _browser_pause(page)
+                    submit_selector = _click_first(
+                        page,
+                        [
+                            'button[type="submit"]',
+                            'button[data-testid="continue-button"]',
+                            'button:has-text("Continue")',
+                            'button:has-text("continue")',
+                            'button:has-text("Verify")',
+                            'button:has-text("verify")',
+                            'button:has-text("Next")',
+                            'button:has-text("next")',
+                            'button:has-text("続ける")',
+                            'button:has-text("確認")',
+                            'button:has-text("認証")',
+                            'button:has-text("次へ")',
+                        ],
+                        timeout=8,
+                    )
+                    if submit_selector:
+                        log(f"验证码页已点击继续按钮: {submit_selector}")
+                    else:
+                        log("验证码输入后未见按钮，等待自动提交结果")
             try:
-                target = candidate.first
-                target.wait_for(state="visible", timeout=1200)
-                target.click(timeout=1200)
-                target.fill("")
-                target.type(otp, delay=random.randint(18, 45))
-                final_value = str(target.input_value() or "").strip()
-                if final_value:
-                    filled = True
-                    log("验证码页已填写单输入框")
-                    break
+                captured_response = response_info.value
             except Exception:
-                continue
+                captured_response = None
+        else:
+            fill_result = _fill_otp_input(page, otp, log)
+    except Exception as exc:
+        # Keep the observer-based fallback below when no matching network
+        # response is observed.  The input diagnostics remain authoritative.
+        if not fill_result:
+            fill_result = {"ok": False, "errors": [type(exc).__name__]}
 
-    if not filled:
-        # 再等 3 秒重试一次（页面可能还在渲染）
-        time.sleep(3)
-        otp_retry_selectors = [
-            "input[inputmode='numeric']",
-            "input[autocomplete='one-time-code']",
-            "input[name*='code' i]",
-            "input[type='text']",
-        ]
-        for sel in otp_retry_selectors:
+    if not fill_result.get("ok"):
+        return {
+            "ok": False,
+            "status": 0,
+            "url": page.url,
+            "data": None,
+            "text": (
+                "BROWSER_STATE_UNKNOWN: OTP input interaction failed "
+                f"candidates={fill_result.get('candidates', 0)} "
+                f"visible={fill_result.get('visible', 0)} "
+                f"enabled={fill_result.get('enabled', 0)} "
+                f"errors={','.join(fill_result.get('errors') or []) or '-'}"
+            ),
+        }
+
+    if captured_response is None and not callable(expect_response):
+        _browser_pause(page)
+        submit_selector = _click_first(
+            page,
+            [
+                'button[type="submit"]',
+                'button[data-testid="continue-button"]',
+                'button:has-text("Continue")',
+                'button:has-text("continue")',
+                'button:has-text("Verify")',
+                'button:has-text("verify")',
+                'button:has-text("Next")',
+                'button:has-text("next")',
+                'button:has-text("続ける")',
+                'button:has-text("確認")',
+                'button:has-text("認証")',
+                'button:has-text("次へ")',
+            ],
+            timeout=8,
+        )
+        if submit_selector:
+            log(f"验证码页已点击继续按钮: {submit_selector}")
+        else:
+            log("验证码输入后未见按钮，等待自动提交结果")
+
+    if captured_response is not None:
+        captured_status = int(getattr(captured_response, "status", 0) or 0)
+        captured_headers = dict(getattr(captured_response, "headers", {}) or {})
+        captured_location = str(captured_headers.get("location") or "")
+        if captured_location:
             try:
-                target = page.locator(sel).first
-                if target.is_visible(timeout=2000):
-                    target.click(timeout=1500)
-                    target.fill("")
-                    target.type(otp, delay=random.randint(18, 45))
-                    if str(target.input_value() or "").strip():
-                        filled = True
-                        log("验证码页已填写单输入框(重试)")
-                        break
+                captured_location = urlparse(captured_location).path or captured_location[:160]
             except Exception:
-                continue
+                captured_location = captured_location[:160]
+        if 300 <= captured_status < 400 or captured_location:
+            return {
+                "ok": True,
+                "status": captured_status or 200,
+                "url": page.url,
+                "data": {"page_type": "", "continue_url": captured_location},
+                "text": "",
+            }
 
-    if not filled:
-        return {"ok": False, "status": 0, "url": page.url, "data": None, "text": "验证码页未找到可填写输入框"}
-
-    _browser_pause(page)
-    submit_selector = _click_first(
-        page,
-        [
-            'button[type="submit"]',
-            'button[data-testid="continue-button"]',
-            'button:has-text("Continue")',
-            'button:has-text("continue")',
-            'button:has-text("Verify")',
-            'button:has-text("verify")',
-            'button:has-text("Next")',
-            'button:has-text("next")',
-            'button:has-text("続ける")',
-            'button:has-text("確認")',
-            'button:has-text("認証")',
-            'button:has-text("次へ")',
-        ],
-        timeout=8,
-    )
-    if not submit_selector:
-        return {"ok": False, "status": 0, "url": page.url, "data": None, "text": "验证码页未找到 Continue 按钮"}
-    log(f"验证码页已点击继续按钮: {submit_selector}")
+    def _pump_auth_events(milliseconds: int = 250) -> None:
+        # Playwright response callbacks are dispatched while its dispatcher
+        # is pumped.  ``time.sleep`` leaves a synchronous Playwright page
+        # unable to deliver the 302 emitted by the single-field OTP form.
+        try:
+            page.wait_for_timeout(milliseconds)
+        except Exception:
+            time.sleep(max(milliseconds, 0) / 1000)
 
     deadline = time.time() + 20
     last_url = page.url
     while time.time() < deadline:
+        _pump_auth_events(250)
         current_url = page.url
         last_url = current_url or last_url
+        observed_failure = _observed_auth_failure(
+            auth_observer,
+            since=submit_started,
+            current_url=current_url,
+        )
+        if observed_failure:
+            return observed_failure
+        observed = auth_observer.latest(since=submit_started) if auth_observer else None
+        if observed:
+            status = int(observed.get("http_status") or 0)
+            page_type = str(observed.get("page_type") or "")
+            continue_path = str(observed.get("continue_path") or "")
+            if page_type in {
+                "about_you",
+                "consent",
+                "workspace_selection",
+                "organization_selection",
+                "add_phone",
+                "oauth_callback",
+                "chatgpt_home",
+            } or 300 <= status < 400:
+                return {
+                    "ok": True,
+                    "status": status or 200,
+                    "url": current_url,
+                    "data": {
+                        "page_type": page_type,
+                        "continue_url": continue_path,
+                    },
+                    "text": "",
+                }
         if "about-you" in current_url:
             return {"ok": True, "status": 200, "url": current_url, "data": None, "text": ""}
         if "add-phone" in current_url or "chatgpt.com" in current_url or "code=" in current_url:
             return {"ok": True, "status": 200, "url": current_url, "data": None, "text": ""}
-        if "consent" in current_url or "sign-in-with-chatgpt" in current_url or "workspace" in current_url or "organization" in current_url:
+        if "consent" in current_url or "workspace" in current_url or "organization" in current_url:
             return {"ok": True, "status": 200, "url": current_url, "data": None, "text": ""}
         try:
             error_text = page.locator("text=Invalid code").first.text_content(timeout=400)
@@ -1999,11 +2521,33 @@ def _submit_otp_via_page(page, code: str, log) -> dict:
             error_text = ""
         if error_text:
             return {"ok": False, "status": 400, "url": current_url, "data": None, "text": error_text}
-        time.sleep(0.5)
+        _pump_auth_events(250)
+    # One final dispatcher turn catches a redirect response that was emitted
+    # during the last keypress but delivered after the page URL was sampled.
+    _pump_auth_events(500)
+    observed = auth_observer.latest(since=submit_started) if auth_observer else None
+    if observed:
+        status = int(observed.get("http_status") or 0)
+        continue_path = str(observed.get("continue_path") or "")
+        if 300 <= status < 400 or continue_path:
+            return {
+                "ok": True,
+                "status": status or 200,
+                "url": page.url,
+                "data": {
+                    "page_type": str(observed.get("page_type") or ""),
+                    "continue_url": continue_path,
+                },
+                "text": "",
+            }
     return {"ok": False, "status": 0, "url": last_url, "data": None, "text": "验证码页提交后未跳转"}
 
 
-def _submit_about_you_via_page(page, log) -> dict:
+def _submit_about_you_via_page(
+    page,
+    log,
+    auth_observer: AuthResponseObserver | None = None,
+) -> dict:
     from .constants import generate_random_user_info
 
     user_info = generate_random_user_info()
@@ -2019,7 +2563,7 @@ def _submit_about_you_via_page(page, log) -> dict:
     else:
         us_birthdate = birthdate
         cn_birthdate = birthdate.replace("-", "/")
-    log(f"about_you 表单: name={name}, birthdate={birthdate}, ui_birthdate={us_birthdate}, cn_birthdate={cn_birthdate}")
+    log("about_you 表单数据已生成")
 
     def _fill_locator(locator, value: str) -> bool:
         try:
@@ -2406,15 +2950,7 @@ def _submit_about_you_via_page(page, log) -> dict:
             day_seg = page.locator('div[data-type="day"], input[data-type="day"]')
             year_seg = page.locator('div[data-type="year"], input[data-type="year"]')
             if month_seg.count() > 0 and day_seg.count() > 0 and year_seg.count() > 0:
-                month_seg.first.click(force=True)
-                page.keyboard.type(mm, delay=50)
-                time.sleep(0.3)
-                day_seg.first.click(force=True)
-                page.keyboard.type(dd, delay=50)
-                time.sleep(0.3)
-                year_seg.first.click(force=True)
-                page.keyboard.type(yyyy, delay=50)
-                return True
+                return _fill_react_aria_date_segments(page, mm, dd, yyyy, log)
 
             # 方式2: 单个 date input 里有 MM/DD/YYYY 占位符
             # 点击输入框，然后按顺序输入 MM DD YYYY（Tab 切换段）
@@ -2553,6 +3089,8 @@ def _submit_about_you_via_page(page, log) -> dict:
         raise RuntimeError("about_you 未成功填写 Birthday/Age")
     _browser_pause(page)
 
+    submit_started = time.monotonic()
+    submit_started = time.monotonic()
     submit_selector = _click_first(
         page,
         [
@@ -2577,7 +3115,38 @@ def _submit_about_you_via_page(page, log) -> dict:
     while time.time() < deadline:
         current_url = page.url
         last_url = current_url or last_url
-        if "code=" in current_url or "chatgpt.com" in current_url or "sign-in-with-chatgpt" in current_url:
+        observed_failure = _observed_auth_failure(
+            auth_observer,
+            since=submit_started,
+            current_url=current_url,
+        )
+        if observed_failure:
+            return observed_failure
+        observed = auth_observer.latest(since=submit_started) if auth_observer else None
+        if observed and str(observed.get("page_type") or "") in {
+            "about_you",
+            "consent",
+            "workspace_selection",
+            "organization_selection",
+            "add_phone",
+            "oauth_callback",
+            "chatgpt_home",
+        }:
+            return {
+                "ok": True,
+                "status": int(observed.get("http_status") or 200),
+                "url": current_url,
+                "data": observed,
+                "text": "",
+            }
+        observed_failure = _observed_auth_failure(
+            auth_observer,
+            since=submit_started,
+            current_url=current_url,
+        )
+        if observed_failure:
+            return observed_failure
+        if "code=" in current_url or "chatgpt.com" in current_url:
             return {"ok": True, "status": 200, "url": current_url, "data": None, "text": ""}
         if "add-phone" in current_url:
             return {"ok": True, "status": 200, "url": current_url, "data": None, "text": ""}
@@ -2656,34 +3225,57 @@ def _submit_about_you_via_page(page, log) -> dict:
                     continue
             return {"ok": False, "status": 400, "url": current_url, "data": None, "text": error_text}
         time.sleep(0.5)
-    _dump_debug(page, "chatgpt_about_you_fail")
     return {"ok": False, "status": 0, "url": last_url, "data": None, "text": "about_you 提交后未跳转"}
 
 
-def _browser_registration_flow(page, email: str, password: str, otp_callback, log) -> dict:
+def _emit_stage(stage_callback, stage: RegistrationStage, message: str, action: str = "enter") -> None:
+    if callable(stage_callback):
+        stage_callback(stage, message, action)
+
+
+def _browser_registration_flow(
+    page,
+    email: str,
+    password: str,
+    otp_callback,
+    log,
+    *,
+    stage_callback=None,
+    challenge_guard: BrowserChallengeGuard | None = None,
+    auth_observer: AuthResponseObserver | None = None,
+) -> dict:
     device_id = str(uuid.uuid4())
     _seed_browser_device_id(page, device_id)
     state = None
+    _emit_stage(stage_callback, RegistrationStage.EMAIL_SUBMIT, "提交注册邮箱")
     try:
         log("使用 ChatGPT NextAuth 注册入口启动浏览器注册")
         state = _start_browser_signup_via_authorize(page, email, device_id, log)
     except Exception as exc:
         log(f"ChatGPT NextAuth 注册入口失败: {exc}")
-        # Navigation / context-destroyed during CSRF is common; fall back to UI entry.
-        if _is_execution_context_error(exc) or any(
-            token in str(exc).lower()
-            for token in ("csrf", "authorize", "signin", "execution context")
-        ):
+        challenge_resolved = bool(challenge_guard and challenge_guard.resolve(page))
+        if challenge_resolved:
+            log("挑战页已处理，重试 ChatGPT NextAuth 注册入口")
+            state = _start_browser_signup_via_authorize(page, email, device_id, log)
+        if state is None:
+            # Navigation recovery stays inside this browser attempt and mode.
+            recoverable_entry_error = _is_execution_context_error(exc) or any(
+                token in str(exc).lower()
+                for token in ("csrf", "authorize", "signin", "execution context")
+            )
+            if not recoverable_entry_error:
+                raise
             log("回退到 OpenAI 页面注册入口…")
             try:
                 state = _start_browser_signup_via_page(page, email, log)
             except Exception as page_exc:
-                log(f"页面注册入口也失败: {page_exc}")
-                raise RuntimeError(
-                    f"NextAuth 入口失败且页面入口失败: {exc}; {page_exc}"
-                ) from page_exc
-        else:
-            raise
+                if challenge_guard and challenge_guard.resolve(page):
+                    state = _start_browser_signup_via_page(page, email, log)
+                else:
+                    log(f"页面注册入口也失败: {page_exc}")
+                    raise RuntimeError(
+                        f"NextAuth 入口失败且页面入口失败: {exc}; {page_exc}"
+                    ) from page_exc
     if not state:
         raise RuntimeError("注册入口未返回状态")
     auth_cookies = _get_cookies(page)
@@ -2694,9 +3286,12 @@ def _browser_registration_flow(page, email: str, password: str, otp_callback, lo
     )
     log(f"注册状态起点: page={state.get('page_type') or '-'} url={(state.get('current_url') or '')[:100]}")
     register_submitted = False
+    otp_trigger_emitted = False
     seen_states: dict[str, int] = {}
 
     for step in range(12):
+        if challenge_guard and challenge_guard.resolve(page):
+            state = _derive_registration_state_from_page(page)
         signature = "|".join(
             [
                 str(state.get("page_type") or ""),
@@ -2713,13 +3308,19 @@ def _browser_registration_flow(page, email: str, password: str, otp_callback, lo
         if seen_states[signature] > 2:
             raise RuntimeError(f"注册状态卡住: page={state.get('page_type') or '-'}")
 
+        auth_page_error = _classify_authentication_error_page(page)
+        if auth_page_error:
+            raise RuntimeError(auth_page_error)
+
         if _is_registration_complete(state):
+            _emit_stage(stage_callback, RegistrationStage.CALLBACK, "完成授权回调")
             _handle_post_signup_onboarding(page, log)
             return _extract_flow_state(None, page.url)
 
         if _is_password_registration(state):
             if register_submitted:
                 raise RuntimeError("重复进入密码注册阶段")
+            _emit_stage(stage_callback, RegistrationStage.OTP_TRIGGER, "提交密码并触发邮箱验证码")
             log("提交注册密码...")
             pre_cookies = _get_cookies(page)
             log(
@@ -2727,11 +3328,15 @@ def _browser_registration_flow(page, email: str, password: str, otp_callback, lo
                 f"login_session={'yes' if pre_cookies.get('login_session') else 'no'}, "
                 f"oai-client-auth-session={'yes' if pre_cookies.get('oai-client-auth-session') else 'no'}"
             )
-            reg_resp = _submit_password_via_page(page, password, log)
+            reg_resp = _submit_password_via_page(page, password, log, auth_observer)
             log(f"密码页提交状态: {reg_resp.get('status', 0)}")
             if not reg_resp.get("ok"):
+                if challenge_guard and challenge_guard.resolve(page):
+                    state = _derive_registration_state_from_page(page)
+                    continue
                 raise RuntimeError(f"密码页提交失败: {(reg_resp.get('text') or '')[:300]}")
             register_submitted = True
+            otp_trigger_emitted = True
             state = _extract_flow_state(reg_resp.get("data"), reg_resp.get("url", page.url))
             if not state.get("page_type") or _is_password_registration(state):
                 state = _derive_registration_state_from_page(page)
@@ -2742,9 +3347,12 @@ def _browser_registration_flow(page, email: str, password: str, otp_callback, lo
                 state = _derive_registration_state_from_page(page)
                 continue
             log("注册流程落到已有账号登录密码页，按登录流程继续认证...")
-            login_resp = _submit_oauth_password_direct(page, password, log)
+            login_resp = _submit_oauth_password_direct(page, password, log, auth_observer)
             log(f"登录密码页提交状态: {login_resp.get('status', 0)}")
             if not login_resp.get("ok"):
+                if challenge_guard and challenge_guard.resolve(page):
+                    state = _derive_registration_state_from_page(page)
+                    continue
                 raise RuntimeError(f"登录密码页提交失败: {(login_resp.get('text') or '')[:300]}")
             state = _extract_flow_state(login_resp.get("data"), login_resp.get("url", page.url))
             if not state.get("page_type"):
@@ -2754,13 +3362,25 @@ def _browser_registration_flow(page, email: str, password: str, otp_callback, lo
         if _is_email_otp(state):
             if not otp_callback:
                 raise RuntimeError("ChatGPT 注册需要邮箱验证码但未提供 otp_callback")
+            if not otp_trigger_emitted:
+                _emit_stage(
+                    stage_callback,
+                    RegistrationStage.OTP_TRIGGER,
+                    "授权流程已触发邮箱验证码",
+                )
+                otp_trigger_emitted = True
+            _emit_stage(stage_callback, RegistrationStage.OTP_WAIT, "等待 ChatGPT 验证码")
             log("等待 ChatGPT 验证码")
             code = otp_callback()
             if not code:
                 raise RuntimeError("未获取到验证码")
-            otp_resp = _submit_otp_via_page(page, code, log)
+            _emit_stage(stage_callback, RegistrationStage.OTP_SUBMIT, "提交邮箱验证码")
+            otp_resp = _submit_otp_via_page(page, code, log, auth_observer)
             log(f"验证码页提交状态: {otp_resp.get('status', 0)}")
             if not otp_resp.get("ok"):
+                if challenge_guard and challenge_guard.resolve(page):
+                    state = _derive_registration_state_from_page(page)
+                    continue
                 raise RuntimeError(f"验证码校验失败: {(otp_resp.get('text') or '')[:300]}")
             state = _extract_flow_state(otp_resp.get("data"), otp_resp.get("url", page.url))
             if not state.get("page_type"):
@@ -2768,6 +3388,7 @@ def _browser_registration_flow(page, email: str, password: str, otp_callback, lo
             continue
 
         if _is_about_you(state):
+            _emit_stage(stage_callback, RegistrationStage.PROFILE_CREATE, "创建 ChatGPT 资料")
             log("提交 about_you 信息...")
             target_url = _normalize_url(
                 str(state.get("current_url") or state.get("continue_url") or f"{OPENAI_AUTH}/about-you"),
@@ -2776,9 +3397,12 @@ def _browser_registration_flow(page, email: str, password: str, otp_callback, lo
             if "about-you" not in str(page.url):
                 log(f"跳转到 about_you 页面: {target_url[:120]}")
                 _goto_with_retry(page, target_url, wait_until="domcontentloaded", timeout=30000, log=log)
-            about_resp = _submit_about_you_via_page(page, log)
+            about_resp = _submit_about_you_via_page(page, log, auth_observer)
             log(f"about_you 提交状态: {about_resp.get('status', 0)}")
             if not about_resp.get("ok"):
+                if challenge_guard and challenge_guard.resolve(page):
+                    state = _derive_registration_state_from_page(page)
+                    continue
                 raise RuntimeError(f"about_you 提交失败: {(about_resp.get('text') or '')[:300]}")
             state = _extract_flow_state(about_resp.get("data"), about_resp.get("url", page.url))
             if not state.get("page_type"):
@@ -2806,76 +3430,94 @@ class ChatGPTBrowserRegister:
         proxy: Optional[str] = None,
         otp_callback: Optional[Callable[[], str]] = None,
         log_fn: Callable[[str], None] = print,
-        backend_config: Optional[BrowserBackendConfig] = None,
+        browser_profile: Optional[dict[str, Any]] = None,
+        attempt_id: str = "",
+        artifact_root: Optional[str] = None,
+        turnstile_solver: Optional[Callable[[str, str], str]] = None,
+        stage_callback: Optional[Callable[[RegistrationStage, str, str], None]] = None,
     ):
         self.headless = headless
         self.proxy = proxy
         self.otp_callback = otp_callback
         self.log = log_fn
-        # backend_config 为 None 时默认 Camoufox，跟老调用方一致。
-        # BitBrowser 路径需要上层 plugin.py 显式传 backend_config。
-        self.backend_config = backend_config or BrowserBackendConfig.camoufox(
-            headless=bool(headless)
+        self.turnstile_solver = turnstile_solver
+        self.stage_callback = stage_callback
+        self.browser_profile = dict(browser_profile or {})
+        self.attempt_id = str(attempt_id or "")
+        self._engine = CamoufoxEngine(
+            headless=bool(headless),
+            proxy=proxy,
+            profile=browser_profile,
+            attempt_id=attempt_id,
+            artifact_root=artifact_root,
         )
-        if self.backend_config.is_bitbrowser:
-            log_fn(
-                f"ChatGPT 注册使用 BitBrowser backend "
-                f"(profile={self.backend_config.bit_profile_id}, "
-                f"window_mode={self.backend_config.window_mode})"
-            )
 
-    def _open_browser(self, launch_opts: dict):
-        """与业务代码代期使用的 ``with Camoufox(**launch_opts) as browser:`` 接口
-        保持兑现：按 ``self.backend_config`` 路由到 Camoufox 或 BitBrowser。
-        BitBrowser 路径下 launch_opts 里的 proxy/geoip 会被忽略（profile
-        自带代理）。"""
-        _apply_camoufox_visible_window_limit(launch_opts, self.backend_config)
-        return open_browser_backend(
-            launch_opts=launch_opts,
-            config=self.backend_config,
-            camoufox_class=Camoufox,
-            log=self.log,
-        )
+    def _open_browser(self):
+        return self._engine.open()
 
     def run(self, email: str, password: str) -> dict:
-        if self.backend_config.is_bitbrowser:
-            # BitBrowser 路径：profile 已配代理/指纹，launch_opts 不传这些。
-            launch_opts = {"headless": self.backend_config.is_headless}
-        else:
-            proxy = _build_proxy_config(self.proxy)
-            launch_opts = {"headless": self.headless}
-            if proxy:
-                launch_opts["proxy"] = proxy
-                launch_opts["geoip"] = True
-
-        with self._open_browser(launch_opts) as browser:
+        with self._open_browser() as browser:
             page = browser.new_page()
-            self.log("启动浏览器上下文注册状态机")
-            final_state = _browser_registration_flow(
-                page,
-                email,
-                password,
-                self.otp_callback,
-                self.log,
+            self._engine.artifacts.observe(page)
+            challenge_guard = BrowserChallengeGuard(
+                solver=self.turnstile_solver,
+                log=self.log,
+                proxy=self.proxy,
+                user_agent=str(self.browser_profile.get("user_agent") or ""),
+                attempt_id=self.attempt_id,
             )
-            self.log(f"注册流程完成: page={final_state.get('page_type') or '-'}")
+            challenge_guard.observe(page)
+            auth_observer = AuthResponseObserver()
+            auth_observer.observe(page)
+            try:
+                self.log("启动浏览器上下文注册状态机")
+                final_state = _browser_registration_flow(
+                    page,
+                    email,
+                    password,
+                    self.otp_callback,
+                    self.log,
+                    stage_callback=self.stage_callback,
+                    challenge_guard=challenge_guard,
+                    auth_observer=auth_observer,
+                )
+                self.log(f"注册流程完成: page={final_state.get('page_type') or '-'}")
 
-            # 获取 session token 和 cookies
-            cookies_dict = _get_cookies(page)
-            session_info = _fetch_chatgpt_session_from_page(page, cookies_dict, self.log)
-            result = {
-                "email": email,
-                "password": password,
-                "account_id": session_info.get("account_id", ""),
-                "access_token": session_info.get("access_token", ""),
-                "refresh_token": session_info.get("refresh_token", ""),
-                "id_token": session_info.get("id_token", ""),
-                "session_token": session_info.get("session_token", ""),
-                "workspace_id": session_info.get("workspace_id", ""),
-                "cookies": session_info.get("cookies", "") or _cookies_to_header(cookies_dict),
-                "profile": session_info.get("profile", {}),
-                "expires_at": session_info.get("expires_at", ""),
-                "session": session_info.get("session", {}),
-                "registration_state": final_state,
-            }
-            return result
+                # 获取 session token 和 cookies
+                cookies_dict = _get_cookies(page)
+                session_info = _fetch_chatgpt_session_from_page(page, cookies_dict, self.log)
+                result = {
+                    "email": email,
+                    "password": password,
+                    "account_id": session_info.get("account_id", ""),
+                    "access_token": session_info.get("access_token", ""),
+                    "refresh_token": session_info.get("refresh_token", ""),
+                    "id_token": session_info.get("id_token", ""),
+                    "session_token": session_info.get("session_token", ""),
+                    "workspace_id": session_info.get("workspace_id", ""),
+                    "cookies": session_info.get("cookies", "") or _cookies_to_header(cookies_dict),
+                    "profile": session_info.get("profile", {}),
+                    "expires_at": session_info.get("expires_at", ""),
+                    "session": session_info.get("session", {}),
+                    "registration_state": final_state,
+                }
+                return result
+            except BaseException as exc:
+                latest_auth = auth_observer.latest()
+                if latest_auth:
+                    self.log(
+                        "OpenAI auth response "
+                        f"status={latest_auth.get('http_status') or 0} "
+                        f"error_code={latest_auth.get('error_code') or '-'} "
+                        f"page_type={latest_auth.get('page_type') or '-'} "
+                        f"flow_epoch={latest_auth.get('flow_epoch') or '-'}"
+                    )
+                evidence = self._engine.artifacts.capture(
+                    page,
+                    exc,
+                    secrets=(email, password, self.proxy or ""),
+                )
+                self.log("Browser failure evidence captured")
+                wrapped = RuntimeError(str(exc))
+                wrapped.artifacts = evidence
+                raise wrapped from exc

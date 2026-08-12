@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from application.task_commands import TaskCommandsService
+from application.tasks import _registration_concurrency
 from application.tasks_query import TasksQueryService
 
 router = APIRouter(prefix="/tasks", tags=["task-commands"])
@@ -29,6 +30,8 @@ class RegisterTaskRequest(BaseModel):
 def create_register_task(body: RegisterTaskRequest):
     payload = body.model_dump()
     extra = dict(body.extra or {})
+    extra.pop("browser_fallback_on_cf", None)
+    extra["strict_executor_mode"] = True
     extra["identity_provider"] = "mailbox"
     mail_provider = str(extra.get("mail_provider") or "").strip()
     if body.executor_type == "protocol":
@@ -78,7 +81,26 @@ def create_register_task(body: RegisterTaskRequest):
     payload["extra"] = extra
     if mail_provider:
         extra["mail_provider"] = mail_provider
-    return command_service.create_register_task(payload)
+    proxy_count = 1 if body.proxy else 0
+    if not body.proxy:
+        try:
+            from core.proxy_pool import proxy_pool
+
+            proxy_count = int(proxy_pool.count_available())
+        except Exception:
+            proxy_count = 0
+    effective_concurrency = _registration_concurrency(
+        payload["concurrency"],
+        body.count,
+        executor_type=body.executor_type,
+        proxy_count=proxy_count,
+    )
+    payload["requested_concurrency"] = int(body.concurrency or 1)
+    payload["effective_concurrency"] = effective_concurrency
+    task = command_service.create_register_task(payload)
+    task["requested_concurrency"] = int(body.concurrency or 1)
+    task["effective_concurrency"] = effective_concurrency
+    return task
 
 
 @router.post("/{task_id}/cancel")

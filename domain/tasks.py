@@ -39,5 +39,16 @@ class TaskEvent:
     level: str
     message: str
     line: str
+    kind: str = "log"
+    attempt_id: str = ""
+    seq: int = 0
+    stage: str = ""
+    action: str = ""
+    event_code: str = ""
+    error_code: str = ""
+    retryable: bool = False
+    retry_index: int = 0
+    duration_ms: int = 0
+    schema_version: int = 1
     detail: dict[str, Any] = field(default_factory=dict)
     created_at: Optional[datetime] = None

@@ -194,7 +194,7 @@ class ApiMailboxPool(BaseMailbox):
     def _request(self, entry: ApiMailboxEntry) -> tuple[object | None, str]:
         response = self.session.get(
             entry.api_url,
-            headers={"Accept": "application/json, text/plain, */*", "User-Agent": "aBaiAutoplus/api-mailbox"},
+            headers={"Accept": "application/json, text/plain, */*", "User-Agent": "Auto-gpt-free/api-mailbox"},
             proxies=self.proxy,
             timeout=self.request_timeout,
         )

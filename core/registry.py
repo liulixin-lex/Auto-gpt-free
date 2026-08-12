@@ -12,9 +12,8 @@ def register(cls: Type[BasePlatform]):
 
 
 def load_all():
-    """只加载当前仪表盘仍会展示的平台。"""
-    for name in ("chatgpt", "cursor", "kiro"):
-        importlib.import_module(f"platforms.{name}.plugin")
+    """加载唯一受支持的 ChatGPT 平台。"""
+    importlib.import_module("platforms.chatgpt.plugin")
 
 
 def get(name: str) -> Type[BasePlatform]:
@@ -29,7 +28,6 @@ def _class_defaults(cls: Type[BasePlatform]) -> dict[str, list[str]]:
         "supported_executors": list(getattr(cls, "supported_executors", [])),
         "supported_identity_modes": list(getattr(cls, "supported_identity_modes", [])),
         "supported_oauth_providers": list(getattr(cls, "supported_oauth_providers", [])),
-        "capabilities": list(getattr(cls, "capabilities", [])),
     }
 
 

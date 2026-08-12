@@ -1,5 +1,6 @@
 """全局配置持久化 - 存储在 SQLite"""
 from typing import Optional
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Field, SQLModel, Session, select
 from .db import engine
 
@@ -14,9 +15,15 @@ class ConfigStore:
     """简单 key-value 配置存储"""
 
     def get(self, key: str, default: str = "") -> str:
-        with Session(engine) as s:
-            item = s.get(ConfigItem, key)
-            return item.value if item else default
+        try:
+            with Session(engine) as s:
+                item = s.get(ConfigItem, key)
+                return item.value if item else default
+        except OperationalError:
+            # Startup and migration checks can read settings before ``init_db``
+            # has created the compatibility table. Defaults keep preflight
+            # deterministic until initialization completes.
+            return default
 
     def set(self, key: str, value: str) -> None:
         with Session(engine) as s:

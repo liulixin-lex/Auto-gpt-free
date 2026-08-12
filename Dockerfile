@@ -50,7 +50,8 @@ COPY --from=frontend-builder /app/static ./static
 
 # 启动脚本
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.sh \
+    && chmod +x /docker-entrypoint.sh
 
 # APP_PASSWORD: 运行时通过 -e APP_PASSWORD=xxx 设置
 # 不设置则无密码保护（适用于本地使用）

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import io
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -33,7 +33,7 @@ class AccountUpdateRequest(BaseModel):
 
 
 class ImportRequest(BaseModel):
-    platform: str
+    platform: Literal["chatgpt"] = "chatgpt"
     lines: list[str]
 
 
@@ -62,7 +62,7 @@ def _stream_artifact(artifact: ExportArtifact) -> StreamingResponse:
 
 @router.get("")
 def list_accounts(
-    platform: str = "",
+    platform: Literal["", "chatgpt"] = "",
     status: str = "",
     email: str = "",
     page: int = 1,
@@ -148,7 +148,10 @@ def export_accounts_cpa(body: BatchExportRequest):
 
 @router.post("/import")
 def import_accounts(body: ImportRequest):
-    return service.import_accounts(body.platform, body.lines)
+    try:
+        return service.import_accounts(body.platform, body.lines)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/{account_id}")

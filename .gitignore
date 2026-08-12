@@ -9,6 +9,9 @@ __pycache__/
 dist/
 build/
 _debug_*.py
+.pytest_cache/
+.codex-verification/
+﻿.codex-verification/
 
 # 数据库
 *.db
@@ -34,6 +37,9 @@ frontend/dist/
 electron/node_modules/
 electron/dist/
 electron/backend/
+electron/camoufox-browser/
+electron/camoufox-addons/
+electron/camoufox-geoip/
 
 # PyInstaller
 backend.spec
@@ -49,6 +55,8 @@ data/
 # 环境变量
 .env
 .env.local
+.env.*
+!.env.example
 
 # 文档
 docs/

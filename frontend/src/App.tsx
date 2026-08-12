@@ -40,7 +40,7 @@ const SETTINGS_NAV_ITEMS: { labelKey: TranslationKey; hash: string }[] = [
   { labelKey: "nav.settings.general", hash: "general" },
   { labelKey: "nav.settings.mailbox", hash: "mailbox" },
   { labelKey: "nav.settings.captcha", hash: "captcha" },
-  { labelKey: "nav.settings.sync", hash: "sync" },
+  { labelKey: "nav.settings.network", hash: "network" },
 ];
 
 const NAV_ITEMS: NavItem[] = [
@@ -111,10 +111,10 @@ function Deck({
               className={cn("xy-tab", active && "xy-tab-on")}
             >
               <Icon className="h-3.5 w-3.5 opacity-80" strokeWidth={2} />
-              <span className="font-[family-name:var(--font-mono)] text-[10px] opacity-60">
+              <span className="xy-tab-code font-[family-name:var(--font-mono)] text-[10px] opacity-60">
                 {code}
               </span>
-              <span>{label}</span>
+              <span className="xy-tab-label">{label}</span>
               {path === "/jobs" && runningCount > 0 ? (
                 <span className="ml-1 inline-flex min-w-[16px] items-center justify-center rounded-full bg-[var(--accent)] px-1 font-[family-name:var(--font-mono)] text-[10px] font-bold text-[oklch(0.14_0_0)]">
                   {runningCount}
@@ -277,6 +277,7 @@ function SetupScreen({ onDone }: { onDone: (token: string) => void }) {
     try {
       const res = await fetch(API + "/auth/setup", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: pw, password_confirm: pw2 }),
       });
@@ -352,6 +353,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string) => void }) {
     try {
       const res = await fetch(API + "/auth/login", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: pw }),
       });
@@ -437,7 +439,7 @@ function AppContent() {
     const token = getAuthToken();
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
-    fetch(API + "/auth/check", { headers })
+    fetch(API + "/auth/check", { headers, credentials: "include" })
       .then((r) => r.json())
       .then((data) => {
         if (data.setup_required) {
@@ -482,7 +484,7 @@ function AppContent() {
             </div>
           </div>
           <div className="xy-gate-body">
-            <div className="xy-k">BOOT</div>
+            <div className="xy-k">{t("common.booting")}</div>
             <p className="xy-gate-desc mt-3 font-[family-name:var(--font-mono)] text-[11px] uppercase tracking-[0.14em]">
               {t("app.loading")}
             </p>

@@ -1,35 +1,36 @@
-from platforms._browser_backend import BrowserBackendConfig
-from platforms.chatgpt.browser_register import _apply_camoufox_visible_window_limit
+from platforms.chatgpt.browser_engine import CAMOUFOX_WINDOW_SIZES, CamoufoxEngine
 
 
-def test_apply_camoufox_visible_window_limit_sets_1280_by_720_window_for_headed_camoufox():
-    launch_opts = {"headless": False}
-
-    _apply_camoufox_visible_window_limit(
-        launch_opts,
-        BrowserBackendConfig.camoufox(headless=False),
+def test_attempt_profile_controls_stable_window_dimensions():
+    profile = {"viewport": {"width": 1440, "height": 900}}
+    headed = CamoufoxEngine(
+        headless=False,
+        profile=profile,
+        attempt_id="same-attempt",
+        system_name="Windows",
+    )
+    headless = CamoufoxEngine(
+        headless=True,
+        profile=profile,
+        attempt_id="same-attempt",
+        system_name="Windows",
     )
 
-    assert launch_opts["window"] == (1280, 720)
+    assert headed.build_launch_options()["window"] == (1440, 900)
+    assert headless.build_launch_options()["window"] == (1440, 900)
 
 
-def test_apply_camoufox_visible_window_limit_skips_headless_camoufox():
-    launch_opts = {"headless": True}
+def test_attempt_without_profile_gets_supported_deterministic_window():
+    first = CamoufoxEngine(
+        headless=False,
+        attempt_id="deterministic-attempt",
+        system_name="Windows",
+    ).build_launch_options()["window"]
+    second = CamoufoxEngine(
+        headless=False,
+        attempt_id="deterministic-attempt",
+        system_name="Windows",
+    ).build_launch_options()["window"]
 
-    _apply_camoufox_visible_window_limit(
-        launch_opts,
-        BrowserBackendConfig.camoufox(headless=True),
-    )
-
-    assert "window" not in launch_opts
-
-
-def test_apply_camoufox_visible_window_limit_skips_bitbrowser():
-    launch_opts = {"headless": False}
-
-    _apply_camoufox_visible_window_limit(
-        launch_opts,
-        BrowserBackendConfig.bitbrowser(profile_id="profile-1"),
-    )
-
-    assert "window" not in launch_opts
+    assert first == second
+    assert first in CAMOUFOX_WINDOW_SIZES

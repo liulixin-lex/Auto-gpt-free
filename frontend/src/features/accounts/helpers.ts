@@ -1,3 +1,12 @@
+import {
+  DEFAULT_LANGUAGE,
+  localizeEventMessage,
+  translate,
+  translateAccountStatus,
+  type Language,
+  type TranslationKey,
+} from '@/lib/i18n'
+
 export const STATUS_VARIANT: Record<string, any> = {
   registered: 'default',
   trial: 'success',
@@ -9,9 +18,6 @@ export const STATUS_VARIANT: Record<string, any> = {
   valid: 'success',
   unknown: 'secondary',
 }
-
-export const platformActionsCache = new Map<string, any[]>()
-export const platformActionsPromiseCache = new Map<string, Promise<any[]>>()
 
 export function getAccountOverview(acc: any) {
   return acc?.overview || {}
@@ -75,7 +81,7 @@ export function getValidityStatus(acc: any) {
   )
 }
 
-export function getCompactStatusMeta(acc: any) {
+export function getCompactStatusMeta(acc: any, language: Language = DEFAULT_LANGUAGE) {
   const summary = getDisplaySummary(acc)
   const primaryMetrics = Array.isArray(summary?.primary_metrics)
     ? summary.primary_metrics
@@ -84,21 +90,24 @@ export function getCompactStatusMeta(acc: any) {
     return primaryMetrics
       .slice(0, 2)
       .map((item: any) => {
-        const sub = item?.sub ? ` · ${item.sub}` : ''
-        return `${item?.label || ''}:${item?.value || '-'}${sub}`
+        const sub = item?.sub ? ` · ${localizeEventMessage(String(item.sub), language)}` : ''
+        const label = item?.label ? localizeEventMessage(String(item.label), language) : ''
+        return `${label}:${item?.value || '-'}${sub}`
       })
       .join(' / ')
   }
   const overview = getAccountOverview(acc)
   const parts = [
-    `生命周期:${getLifecycleStatus(acc)}`,
-    `套餐:${getPlanState(acc)}`,
-    `有效:${getValidityStatus(acc)}`,
+    `${translate('accounts.lifecycle', language)}:${translateAccountStatus(getLifecycleStatus(acc), language)}`,
+    `${translate('accounts.plan', language)}:${translateAccountStatus(getPlanState(acc), language)}`,
+    `${translate('accounts.validity', language)}:${translateAccountStatus(getValidityStatus(acc), language)}`,
   ]
   const remainingCredits = overview?.remaining_credits
   const usageTotal = overview?.usage_total
   if (remainingCredits || usageTotal) {
-    parts.push(`额度:${remainingCredits || '-'} / 已用:${usageTotal || '-'}`)
+    parts.push(
+      `${translate('accounts.credits', language)}:${remainingCredits || '-'} / ${translate('accounts.used', language)}:${usageTotal || '-'}`,
+    )
   }
   return parts.join(' / ')
 }
@@ -152,57 +161,12 @@ export function getPrimaryToken(acc: any) {
   return credential?.value || ''
 }
 
-export function formatResultValue(value: any) {
+export function formatResultValue(value: any, language: Language = DEFAULT_LANGUAGE) {
   if (value === null || value === undefined || value === '') return '-'
-  if (typeof value === 'boolean') return value ? '是' : '否'
+  if (typeof value === 'boolean') {
+    return translate(value ? 'common.yes' : 'common.no', language)
+  }
   return String(value)
-}
-
-export function buildActionParamDraft(action: any, acc: any) {
-  const params = Array.isArray(action?.params) ? action.params : []
-  const emailPrefix = String(acc?.email || '').split('@')[0] || 'Development'
-  const draft: Record<string, string> = {}
-  params.forEach((param: any) => {
-    if (action?.id === 'create_api_key' && param?.key === 'name') {
-      draft[param.key] = `${emailPrefix}Development`
-      return
-    }
-    if (Array.isArray(param?.options) && param.options.length > 0) {
-      draft[param?.key || ''] = String(param.options[0] ?? '')
-      return
-    }
-    draft[param?.key || ''] = ''
-  })
-  return draft
-}
-
-export async function loadPlatformActions(
-  platform: string,
-  options?: { force?: boolean },
-  apiFetch?: (path: string) => Promise<any>,
-) {
-  const key = String(platform || '').trim()
-  if (!key || !apiFetch) return []
-  const force = Boolean(options?.force)
-  if (!force && platformActionsCache.has(key)) {
-    return platformActionsCache.get(key) || []
-  }
-  if (!force && platformActionsPromiseCache.has(key)) {
-    return platformActionsPromiseCache.get(key) || []
-  }
-  const pending = apiFetch(`/actions/${key}`)
-    .then((data) => {
-      const actions = Array.isArray(data?.actions) ? data.actions : []
-      platformActionsCache.set(key, actions)
-      platformActionsPromiseCache.delete(key)
-      return actions
-    })
-    .catch((error) => {
-      platformActionsPromiseCache.delete(key)
-      throw error
-    })
-  platformActionsPromiseCache.set(key, pending)
-  return pending
 }
 
 export function emailApiLine(email: string) {
@@ -226,24 +190,32 @@ export function copyText(text: string) {
 export const ACCOUNT_EXPORT_FORMATS = [
   {
     key: 'json',
-    label: 'JSON 凭据包',
-    hint: 'email / token / session 原始包',
+    labelKey: 'accounts.exportFormat.json.label',
+    hintKey: 'accounts.exportFormat.json.hint',
   },
   {
     key: 'sub2api',
-    label: 'Sub2API OAuth',
-    hint: '上游 free 机制 · 不调 agent/register',
+    labelKey: 'accounts.exportFormat.sub2api.label',
+    hintKey: 'accounts.exportFormat.sub2api.hint',
   },
   {
     key: 'sub2api-agent-identity',
-    label: 'Sub2API Agent Identity',
-    hint: '优先私钥身份；Registry 关闭则自动 OAuth',
+    labelKey: 'accounts.exportFormat.agentIdentity.label',
+    hintKey: 'accounts.exportFormat.agentIdentity.hint',
   },
   {
     key: 'cpa',
-    label: 'CPA Token',
-    hint: 'CPA 管理台 token JSON',
+    labelKey: 'accounts.exportFormat.cpa.label',
+    hintKey: 'accounts.exportFormat.cpa.hint',
   },
 ] as const
+
+export function getAccountExportFormats(language: Language = DEFAULT_LANGUAGE) {
+  return ACCOUNT_EXPORT_FORMATS.map((option) => ({
+    key: option.key,
+    label: translate(option.labelKey as TranslationKey, language),
+    hint: translate(option.hintKey as TranslationKey, language),
+  }))
+}
 
 export type AccountExportFormat = (typeof ACCOUNT_EXPORT_FORMATS)[number]['key']

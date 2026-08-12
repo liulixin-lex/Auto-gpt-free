@@ -33,15 +33,11 @@
   - 数据库：`*.db`（含全部账号凭证与 token）
   - 抓包 / 调试 dump：`*.har`、`*_inspect.txt`、`otp_*.txt`、`logger.txt`、`task_events.txt` 等
 - **所有第三方 API key 走环境变量或 Web UI 配置**，不要写死进源码。参考 [.env.example](.env.example)。
-- 怀疑任何凭证泄露时，**第一时间在对应平台后台吊销 / 重置**（接码平台 key、代理凭证、平台账号密码与会话）。
+- 怀疑任何凭证泄露时，**第一时间在对应平台后台吊销 / 重置**（验证码服务 key、代理凭证、平台账号密码与会话）。
 
 ### 部署加固
 
 - **主服务**：公网部署务必完成访问鉴权（首次打开在初始化页设置密码，或设置 `APP_PASSWORD` / `MANAGEMENT_PASSWORD`）；noVNC 设置 `VNC_PASSWORD`。
-- **customer_portal_api（独立门户）**：生产环境必须
-  - 修改默认 `PORTAL_JWT_SECRET`（默认 `change-me-in-production` 不可用于生产）
-  - 修改默认管理员密码（默认 `admin123456`，首次登录后立即改密）
-  - 将 `PORTAL_CORS_ORIGINS` 从 `*` 收敛到具体可信域名
 - **端口暴露**：8000 / 6080 / 8889 仅在受信任网络开放；公网部署请置于反向代理 + TLS 之后。
 
 ### 数据最小化

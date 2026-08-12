@@ -6,6 +6,7 @@ import random
 import logging
 import asyncio
 from typing import Optional, Union
+from urllib.parse import urlsplit
 import argparse
 from quart import Quart, request, jsonify
 from camoufox.async_api import AsyncCamoufox
@@ -135,7 +136,7 @@ class TurnstileAPIServer:
     def _setup_routes(self) -> None:
         """Set up the application routes."""
         self.app.before_serving(self._startup)
-        self.app.route('/turnstile', methods=['GET'])(self.process_turnstile)
+        self.app.route('/turnstile', methods=['GET', 'POST'])(self.process_turnstile)
         self.app.route('/result', methods=['GET'])(self.get_result)
         self.app.route('/')(self.index)
         
@@ -499,7 +500,7 @@ class TurnstileAPIServer:
         
         // Setup token capture callback
         window._turnstileTokenCallback = function(token) {{
-            console.log('Turnstile token captured:', token);
+            console.log('Turnstile token captured');
             tokenInput.value = token;
         }};
         
@@ -559,7 +560,7 @@ class TurnstileAPIServer:
                                 {f'action: "{action}",' if action else ''}
                                 {f'cdata: "{cdata}",' if cdata else ''}
                                 callback: function(token) {{
-                                    console.log('Turnstile solved with token:', token);
+                                    console.log('Turnstile solved');
                                     window._turnstileTokenCallback(token);
                                 }},
                                 'error-callback': function(error) {{
@@ -589,7 +590,7 @@ class TurnstileAPIServer:
                     {f'action: "{action}",' if action else ''}
                     {f'cdata: "{cdata}",' if cdata else ''}
                     callback: function(token) {{
-                        console.log('Turnstile solved with token:', token);
+                        console.log('Turnstile solved');
                         window._turnstileTokenCallback(token);
                     }},
                     'error-callback': function(error) {{
@@ -606,7 +607,7 @@ class TurnstileAPIServer:
         
         // Setup global callback
         window.onTurnstileCallback = function(token) {{
-            console.log('Global turnstile callback executed:', token);
+            console.log('Global turnstile callback executed');
         }};
         
         return 'injected';
@@ -621,9 +622,18 @@ class TurnstileAPIServer:
                 logger.debug(f"Browser {index}: Injected new CAPTCHA widget with sitekey: {websiteKey}")
         return result
 
-    async def _solve_turnstile(self, task_id: str, url: str, sitekey: str, action: Optional[str] = None, cdata: Optional[str] = None):
+    async def _solve_turnstile(
+        self,
+        task_id: str,
+        url: str,
+        sitekey: str,
+        action: Optional[str] = None,
+        cdata: Optional[str] = None,
+        requested_proxy: Optional[str] = None,
+        requested_useragent: Optional[str] = None,
+    ):
         """Solve the Turnstile challenge."""
-        proxy = None
+        proxy = str(requested_proxy or "").strip() or None
 
         index, browser, browser_config = await self.browser_pool.get()
         
@@ -638,7 +648,7 @@ class TurnstileAPIServer:
             if self.debug:
                 logger.warning(f"Browser {index}: Cannot check browser state: {str(e)}")
 
-        if self.proxy_support:
+        if self.proxy_support and not proxy:
             proxy_file_path = os.path.join(os.getcwd(), "proxies.txt")
 
             try:
@@ -659,89 +669,28 @@ class TurnstileAPIServer:
                 logger.error(f"Error reading proxy file: {str(e)}")
                 proxy = None
 
-            if proxy:
-                if '@' in proxy:
-                    try:
-                        scheme_part, auth_part = proxy.split('://')
-                        auth, address = auth_part.split('@')
-                        username, password = auth.split(':')
-                        ip, port = address.split(':')
-                        if self.debug:
-                            logger.debug(f"Browser {index}: Creating context with proxy {scheme_part}://{ip}:{port} (auth: {username}:***)")
-                        context_options = {
-                            "proxy": {
-                                "server": f"{scheme_part}://{ip}:{port}",
-                                "username": username,
-                                "password": password
-                            },
-                            "user_agent": browser_config['useragent']
-                        }
-                        
-                        if browser_config['sec_ch_ua'] and browser_config['sec_ch_ua'].strip():
-                            context_options['extra_http_headers'] = {
-                                'sec-ch-ua': browser_config['sec_ch_ua']
-                            }
-                        
-                        context = await browser.new_context(**context_options)
-                    except ValueError:
-                        raise ValueError(f"Invalid proxy format: {proxy}")
-                else:
-                    parts = proxy.split(':')
-                    if len(parts) == 5:
-                        proxy_scheme, proxy_ip, proxy_port, proxy_user, proxy_pass = parts
-                        if self.debug:
-                            logger.debug(f"Browser {index}: Creating context with proxy {proxy_scheme}://{proxy_ip}:{proxy_port} (auth: {proxy_user}:***)")
-                        context_options = {
-                            "proxy": {
-                                "server": f"{proxy_scheme}://{proxy_ip}:{proxy_port}",
-                                "username": proxy_user,
-                                "password": proxy_pass
-                            },
-                            "user_agent": browser_config['useragent']
-                        }
-                        
-                        if browser_config['sec_ch_ua'] and browser_config['sec_ch_ua'].strip():
-                            context_options['extra_http_headers'] = {
-                                'sec-ch-ua': browser_config['sec_ch_ua']
-                            }
-                        
-                        context = await browser.new_context(**context_options)
-                    elif len(parts) == 3:
-                        if self.debug:
-                            logger.debug(f"Browser {index}: Creating context with proxy {proxy}")
-                        context_options = {
-                            "proxy": {"server": f"{proxy}"},
-                            "user_agent": browser_config['useragent']
-                        }
-                        
-                        if browser_config['sec_ch_ua'] and browser_config['sec_ch_ua'].strip():
-                            context_options['extra_http_headers'] = {
-                                'sec-ch-ua': browser_config['sec_ch_ua']
-                            }
-                        
-                        context = await browser.new_context(**context_options)
-                    else:
-                        raise ValueError(f"Invalid proxy format: {proxy}")
-            else:
-                if self.debug:
-                    logger.debug(f"Browser {index}: Creating context without proxy")
-                context_options = {"user_agent": browser_config['useragent']}
-                
-                if browser_config['sec_ch_ua'] and browser_config['sec_ch_ua'].strip():
-                    context_options['extra_http_headers'] = {
-                        'sec-ch-ua': browser_config['sec_ch_ua']
-                    }
-                
-                context = await browser.new_context(**context_options)
-        else:
-            context_options = {"user_agent": browser_config['useragent']}
-            
-            if browser_config['sec_ch_ua'] and browser_config['sec_ch_ua'].strip():
-                context_options['extra_http_headers'] = {
-                    'sec-ch-ua': browser_config['sec_ch_ua']
-                }
-            
-            context = await browser.new_context(**context_options)
+        user_agent = str(requested_useragent or browser_config['useragent'] or "")
+        context_options = {"user_agent": user_agent}
+        if browser_config['sec_ch_ua'] and browser_config['sec_ch_ua'].strip():
+            context_options['extra_http_headers'] = {'sec-ch-ua': browser_config['sec_ch_ua']}
+        if proxy:
+            parsed = urlsplit(proxy if '://' in proxy else f'http://{proxy}')
+            if not parsed.hostname or not parsed.port:
+                raise ValueError("Invalid proxy format: host and port are required")
+            proxy_options = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"}
+            if parsed.username:
+                proxy_options["username"] = parsed.username
+            if parsed.password:
+                proxy_options["password"] = parsed.password
+            context_options["proxy"] = proxy_options
+            if self.debug:
+                logger.debug(
+                    f"Browser {index}: Creating context with proxy "
+                    f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+                )
+        elif self.debug:
+            logger.debug(f"Browser {index}: Creating context without proxy")
+        context = await browser.new_context(**context_options)
 
         page = await context.new_page()
         
@@ -770,7 +719,11 @@ class TurnstileAPIServer:
 
         try:
             if self.debug:
-                logger.debug(f"Browser {index}: Starting Turnstile solve for URL: {url} with Sitekey: {sitekey} | Action: {action} | Cdata: {cdata} | Proxy: {proxy}")
+                logger.debug(
+                    f"Browser {index}: Starting Turnstile solve for URL: {url} "
+                    f"with Sitekey: {sitekey} | Action: {action} | Cdata: {cdata} | "
+                    f"Proxy: {'bound' if proxy else 'direct'}"
+                )
                 logger.debug(f"Browser {index}: Setting up optimized page loading with resource blocking")
 
             if self.debug:
@@ -865,7 +818,7 @@ class TurnstileAPIServer:
                             token = await locator.input_value(timeout=500)
                             if token:
                                 elapsed_time = round(time.time() - start_time, 3)
-                                logger.success(f"Browser {index}: Successfully solved captcha - {COLORS.get('MAGENTA')}{token[:10]}{COLORS.get('RESET')} in {COLORS.get('GREEN')}{elapsed_time}{COLORS.get('RESET')} Seconds")
+                                logger.success(f"Browser {index}: Successfully solved captcha in {COLORS.get('GREEN')}{elapsed_time}{COLORS.get('RESET')} Seconds")
                                 await save_result(task_id, "turnstile", {"value": token, "elapsed_time": elapsed_time})
                                 return
                         except Exception as e:
@@ -881,7 +834,7 @@ class TurnstileAPIServer:
                                 element_token = await locator.nth(i).input_value(timeout=500)
                                 if element_token:
                                     elapsed_time = round(time.time() - start_time, 3)
-                                    logger.success(f"Browser {index}: Successfully solved captcha - {COLORS.get('MAGENTA')}{element_token[:10]}{COLORS.get('RESET')} in {COLORS.get('GREEN')}{elapsed_time}{COLORS.get('RESET')} Seconds")
+                                    logger.success(f"Browser {index}: Successfully solved captcha in {COLORS.get('GREEN')}{elapsed_time}{COLORS.get('RESET')} Seconds")
                                     await save_result(task_id, "turnstile", {"value": element_token, "elapsed_time": elapsed_time})
                                     return
                             except Exception as e:
@@ -949,10 +902,14 @@ class TurnstileAPIServer:
 
     async def process_turnstile(self):
         """Handle the /turnstile endpoint requests."""
-        url = request.args.get('url')
-        sitekey = request.args.get('sitekey')
-        action = request.args.get('action')
-        cdata = request.args.get('cdata')
+        body = await request.get_json(silent=True) if request.method == 'POST' else {}
+        body = body or {}
+        url = body.get('url') or request.args.get('url')
+        sitekey = body.get('sitekey') or request.args.get('sitekey')
+        action = body.get('action') or request.args.get('action')
+        cdata = body.get('cdata') or request.args.get('cdata')
+        proxy = body.get('proxy') or ''
+        useragent = body.get('useragent') or ''
 
         if not url or not sitekey:
             return jsonify({
@@ -972,7 +929,17 @@ class TurnstileAPIServer:
         })
 
         try:
-            asyncio.create_task(self._solve_turnstile(task_id=task_id, url=url, sitekey=sitekey, action=action, cdata=cdata))
+            asyncio.create_task(
+                self._solve_turnstile(
+                    task_id=task_id,
+                    url=url,
+                    sitekey=sitekey,
+                    action=action,
+                    cdata=cdata,
+                    requested_proxy=proxy,
+                    requested_useragent=useragent,
+                )
+            )
 
             if self.debug:
                 logger.debug(f"Request completed with taskid {task_id}.")

@@ -6,10 +6,11 @@ import type { ConfigOptionsResponse } from '@/lib/config-options'
 import { getCaptchaStrategyLabel } from '@/lib/config-options'
 import { apiDownload, apiFetch, triggerBrowserDownload } from '@/lib/utils'
 import { useI18n } from '@/lib/i18n-context'
+import { localizeEventMessage, translateAccountStatus } from '@/lib/i18n'
 import { buildExecutorOptions, buildRegistrationOptions } from '@/lib/registration'
 import { Button } from '@/components/ui/button'
 import { useLiveJobs } from '@/lib/live-jobs'
-import { Copy, Download, X, Mail, Gauge, Cpu, Hash, Network } from 'lucide-react'
+import { Download, X, Mail, Gauge, Cpu, Hash, Network } from 'lucide-react'
 import {
   STATUS_VARIANT,
   getAccountOverview,
@@ -27,13 +28,13 @@ import {
   getCredentials,
   getCashierUrl,
   getPrimaryToken,
-  ACCOUNT_EXPORT_FORMATS,
+  getAccountExportFormats,
   formatResultValue,
 } from '@/features/accounts/helpers'
 
 const ACCOUNT_TOOL_BUTTON_CLASS = 'h-8 shrink-0 whitespace-nowrap bg-transparent'
 
-// ── 注册弹框 ────────────────────────────────────────────────
+// Registration modal──────────────────
 export function RegisterModal({
   platformMeta,
   onClose,
@@ -57,7 +58,7 @@ export function RegisterModal({
   })
   const [configLoading, setConfigLoading] = useState(true)
   const [regCount, setRegCount] = useState(5)
-  const [concurrency, setConcurrency] = useState(5)
+  const [concurrency, setConcurrency] = useState(1)
   const [dynamicProxy, setDynamicProxy] = useState('')
   const [outlookPoolText, setOutlookPoolText] = useState('')
   const [protocolMailKey, setProtocolMailKey] = useState('')
@@ -160,10 +161,10 @@ export function RegisterModal({
       }))
     // Always offer Outlook pool even if not in settings list
     if (!fromSettings.some((o) => o.key === 'local_ms_pool')) {
-      fromSettings.push({ key: 'local_ms_pool', label: 'Outlook 本地池' })
+      fromSettings.push({ key: 'local_ms_pool', label: t('register.outlookPoolFallback') })
     }
     return fromSettings
-  }, [mailboxSettings])
+  }, [mailboxSettings, t])
 
   useEffect(() => {
     if (protocolMailKey) return
@@ -177,7 +178,7 @@ export function RegisterModal({
 
   const effectiveProtocolMail =
     protocolMailKey || defaultMailboxProvider?.provider_key || 'cloud_mail'
-  const verifyLabel =
+  const verifyLabel = localizeEventMessage(
     selection.executorType === 'protocol'
       ? t('accounts.protocolVerificationSummaryGeneric', {
           mail: effectiveProtocolMail,
@@ -187,7 +188,9 @@ export function RegisterModal({
           configOptions.captcha_policy,
           configOptions.captcha_providers,
           language,
-        )
+        ),
+    language,
+  )
 
   const start = async () => {
     setStarting(true)
@@ -230,7 +233,7 @@ export function RegisterModal({
       trackJob(
         {
           taskId: res.task_id,
-          title: `批量注册 ×${regCount} · ${platformMeta?.display_name || 'ChatGPT'}`,
+          title: `${t('register.taskTitle')} ×${regCount} · ${platformMeta?.display_name || 'ChatGPT'}`,
           source: 'register',
         },
         { force: true },
@@ -254,12 +257,12 @@ export function RegisterModal({
       >
         <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] bg-[var(--bg-pane)] px-5 py-4">
           <div>
-            <div className="xy-k">注册任务</div>
+            <div className="xy-k">{t('register.taskTitle')}</div>
             <h2 className="mt-1 text-[18px] font-bold tracking-tight">
-              填写注册参数
+              {t('register.taskHeading')}
             </h2>
             <p className="mt-1 text-[12px] text-[var(--text-muted)]">
-              提交后打开任务日志页查看进度。
+              {t('register.taskDescription')}
             </p>
           </div>
           <button
@@ -273,13 +276,13 @@ export function RegisterModal({
         <div className="grid min-h-0 flex-1 gap-0 overflow-hidden lg:grid-cols-[minmax(0,1.15fr)_280px]">
           <div className="space-y-4 overflow-y-auto px-5 py-4">
             {configLoading ? (
-              <div className="text-[13px] text-[var(--text-muted)]">读取通道配置…</div>
+              <div className="text-[13px] text-[var(--text-muted)]">{t('register.loadingConfig')}</div>
             ) : (
               <>
                 <section className="space-y-2">
                   <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                     <Mail className="h-3.5 w-3.5 text-[var(--accent-strong)]" />
-                    身份来源
+                    {t('register.identitySource')}
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {registrationOptions.map(option => {
@@ -309,7 +312,7 @@ export function RegisterModal({
                 <section className="space-y-2">
                   <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.06em] text-[var(--text-secondary)]">
                     <Cpu className="h-3.5 w-3.5 text-[var(--accent-strong)]" />
-                    执行引擎
+                    {t('register.executor')}
                   </div>
                   <div className="grid gap-2 sm:grid-cols-3">
                     {executorOptions.map(option => {
@@ -390,7 +393,7 @@ export function RegisterModal({
                 <section className="grid gap-3 sm:grid-cols-2">
                   <label className="block space-y-1">
                     <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                      <Hash className="h-3 w-3" /> 数量
+                      <Hash className="h-3 w-3" /> {t('register.quantity')}
                     </span>
                     <input
                       type="number"
@@ -403,7 +406,7 @@ export function RegisterModal({
                   </label>
                   <label className="block space-y-1">
                     <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                      <Gauge className="h-3 w-3" /> 并发
+                      <Gauge className="h-3 w-3" /> {t('register.concurrency')}
                     </span>
                     <input
                       type="number"
@@ -422,7 +425,7 @@ export function RegisterModal({
 
                 <section className="space-y-1">
                   <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                    <Network className="h-3 w-3" /> 代理（可选）
+                    <Network className="h-3 w-3" /> {t('register.proxyLabel')}
                   </span>
                   <input
                     type="text"
@@ -433,7 +436,7 @@ export function RegisterModal({
                     className="control-surface w-full font-mono text-[12px]"
                   />
                   <p className="text-[11px] text-[var(--text-muted)]">
-                    有值则本批走该代理；空则直连。
+                    {t('register.proxyHint')}
                   </p>
                 </section>
 
@@ -447,35 +450,35 @@ export function RegisterModal({
           </div>
 
           <aside className="border-t border-[var(--border)] bg-[var(--bg-pane)] px-4 py-4 lg:border-l lg:border-t-0">
-            <div className="xy-k">任务参数</div>
+            <div className="xy-k">{t('register.taskParams')}</div>
             <div className="mt-3 space-y-2">
               <div className="xy-kv">
-                <span>target</span>
+                <span>{t('register.target')}</span>
                 <span>{platformMeta?.display_name || 'ChatGPT'}</span>
               </div>
               <div className="xy-kv">
-                <span>identity</span>
+                <span>{t('register.identity')}</span>
                 <span className="max-w-[120px] truncate text-right">{selectedRegistration?.label || '—'}</span>
               </div>
               <div className="xy-kv">
-                <span>engine</span>
+                <span>{t('register.engine')}</span>
                 <span className="max-w-[120px] truncate text-right">{selectedExecutor?.label || '—'}</span>
               </div>
               <div className="xy-kv">
-                <span>verify</span>
+                <span>{t('register.verify')}</span>
                 <span className="max-w-[120px] truncate text-right">{verifyLabel || '—'}</span>
               </div>
               <div className="xy-kv">
-                <span>batch</span>
+                <span>{t('register.batch')}</span>
                 <span>{regCount} × c{concurrency}</span>
               </div>
               <div className="xy-kv">
-                <span>proxy</span>
-                <span>{dynamicProxy.trim() ? 'on' : 'direct'}</span>
+                <span>{t('register.proxyState')}</span>
+                <span>{dynamicProxy.trim() ? t('register.proxyOn') : t('register.proxyDirect')}</span>
               </div>
             </div>
             <p className="mt-4 text-[11px] leading-relaxed text-[var(--text-muted)]">
-              提交后跳转到「任务日志」查看进度。
+              {t('register.submitHint')}
             </p>
             <Button
               onClick={start}
@@ -491,10 +494,10 @@ export function RegisterModal({
               }
               className="mt-4 w-full"
             >
-              {starting ? '提交中…' : '提交并打开日志'}
+              {starting ? t('register.submitting') : t('register.submitAndOpenLogs')}
             </Button>
             <Button variant="outline" onClick={onClose} className="mt-2 w-full" disabled={starting}>
-              取消
+              {t('common.cancel')}
             </Button>
           </aside>
         </div>
@@ -503,15 +506,6 @@ export function RegisterModal({
   )
 
   return typeof document !== 'undefined' ? createPortal(dialog, document.body) : dialog
-}
-
-export function ResultStat({ label, value }: { label: string; value: any }) {
-  return (
-    <div className="border-2 border-[var(--border)] bg-[var(--bg-hover)] px-3 py-2">
-      <div className="text-[11px] uppercase tracking-[0.16em] text-[var(--text-muted)]">{label}</div>
-      <div className="mt-1 text-sm font-medium text-[var(--text-primary)] break-all">{formatResultValue(value)}</div>
-    </div>
-  )
 }
 
 function metricToneClass(tone?: string) {
@@ -535,15 +529,22 @@ function metricAccentClass(tone?: string) {
 }
 
 export function DisplayMetricCard({ metric, compact = false }: { metric: any; compact?: boolean }) {
+  const { language } = useI18n()
   return (
     <div className={`group relative overflow-hidden  border px-3.5 py-3 ${metricToneClass(metric?.tone)}`}>
       <div className={`pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b ${metricAccentClass(metric?.tone)}`} />
       <div className="relative flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-[0.18em] opacity-65">{metric?.label || '-'}</div>
-          {metric?.sub ? <div className="mt-1 truncate text-[11px] opacity-65">{metric.sub}</div> : null}
+          <div className="text-[10px] uppercase tracking-[0.18em] opacity-65">
+            {metric?.label ? localizeEventMessage(metric.label, language) : '-'}
+          </div>
+          {metric?.sub ? (
+            <div className="mt-1 truncate text-[11px] opacity-65">
+              {localizeEventMessage(metric.sub, language)}
+            </div>
+          ) : null}
         </div>
-        <div className={`${compact ? 'text-sm' : 'text-lg'} shrink-0 font-semibold tracking-[-0.03em]`}>{formatResultValue(metric?.value)}</div>
+        <div className={`${compact ? 'text-sm' : 'text-lg'} shrink-0 font-semibold tracking-[-0.03em]`}>{formatResultValue(metric?.value, language)}</div>
       </div>
       {typeof metric?.percent === 'number' ? (
         <div className="relative mt-3 h-1.5 overflow-hidden  bg-black/25">
@@ -555,9 +556,8 @@ export function DisplayMetricCard({ metric, compact = false }: { metric: any; co
 }
 
 export function DisplayWarnings({ warnings }: { warnings: any[] }) {
-  const { language } = useI18n()
+  const { t, language } = useI18n()
   if (!warnings.length) return null
-  const isEn = language === 'en-US'
   return (
     <div className="space-y-2">
       {warnings.map((item: any, index: number) => {
@@ -570,22 +570,14 @@ export function DisplayWarnings({ warnings }: { warnings: any[] }) {
               : 'xy-lamp-warn'
         const badge =
           tone === 'danger'
-            ? isEn
-              ? 'Invalid'
-              : '失效'
+            ? t('accounts.warningInvalid')
             : tone === 'good'
-              ? isEn
-                ? 'OK'
-                : '正常'
-              : isEn
-                ? 'Notice'
-                : '注意'
+              ? t('accounts.warningOk')
+              : t('accounts.warningNotice')
         let message = item?.message || '—'
-        if (isEn && message === '账号当前检测为失效') {
-          message = 'This account is currently marked invalid'
-        } else if (isEn && message === '尚未完成有效性检测') {
-          message = 'Validity check has not been completed yet'
-        }
+        if (message === '\u8d26\u53f7\u5f53\u524d\u68c0\u6d4b\u4e3a\u5931\u6548') message = t('accounts.warningInvalidAccount')
+        else if (message === '\u5c1a\u672a\u5b8c\u6210\u6709\u6548\u6027\u68c0\u6d4b') message = t('accounts.warningValidityPending')
+        else message = localizeEventMessage(message, language)
         return (
           <div
             key={`${item?.key || 'warning'}-${index}`}
@@ -603,21 +595,28 @@ export function DisplayWarnings({ warnings }: { warnings: any[] }) {
 }
 
 export function DisplaySections({ sections }: { sections: any[] }) {
+  const { t, language } = useI18n()
   if (!sections.length) return null
   return (
     <div className="space-y-3">
       {sections.map((section: any) => (
         <div key={section?.key || section?.title} className="border-2 border-[var(--border)] bg-[var(--bg-hover)] p-3">
-          <div className="text-xs font-semibold text-[var(--text-primary)]">{section?.title || '明细'}</div>
+          <div className="text-xs font-semibold text-[var(--text-primary)]">
+            {section?.title ? localizeEventMessage(section.title, language) : t('accounts.detailSection')}
+          </div>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             {(Array.isArray(section?.items) ? section.items : []).map((item: any, index: number) => (
               <div key={`${item?.title || 'item'}-${index}`} className="border-2 border-[var(--border)] bg-black/20 p-3">
-                <div className="text-xs font-semibold text-[var(--text-primary)]">{item?.title || '-'}</div>
+                <div className="text-xs font-semibold text-[var(--text-primary)]">
+                  {item?.title ? localizeEventMessage(item.title, language) : '-'}
+                </div>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-[var(--text-secondary)]">
                   {(Array.isArray(item?.metrics) ? item.metrics : []).map((metric: any) => (
                     <div key={metric?.key || metric?.label}>
-                      <span className="text-[var(--text-muted)]">{metric?.label || '-'}: </span>
-                      <span>{formatResultValue(metric?.value)}</span>
+                      <span className="text-[var(--text-muted)]">
+                        {metric?.label ? localizeEventMessage(metric.label, language) : '-'}:{' '}
+                      </span>
+                      <span>{formatResultValue(metric?.value, language)}</span>
                     </div>
                   ))}
                 </div>
@@ -630,163 +629,7 @@ export function DisplaySections({ sections }: { sections: any[] }) {
   )
 }
 
-export function ActionResultHighlights({ payload }: { payload: any }) {
-  if (!payload || typeof payload !== 'object') return null
-
-  const stats: Array<{ label: string; value: any }> = []
-  if ('valid' in payload) stats.push({ label: '账号有效', value: payload.valid })
-  if (payload.membership_type) stats.push({ label: '套餐', value: payload.membership_type })
-  if (payload.plan) stats.push({ label: '套餐', value: payload.plan })
-  if (payload.plan_id) stats.push({ label: 'Plan ID', value: payload.plan_id })
-  if (typeof payload.has_valid_payment_method === 'boolean') stats.push({ label: '已绑卡', value: payload.has_valid_payment_method })
-  if ('trial_eligible' in payload) stats.push({ label: '可试用', value: payload.trial_eligible })
-  if (payload.trial_length_days) stats.push({ label: '试用天数', value: payload.trial_length_days })
-  if (payload.remaining_credits) stats.push({ label: '剩余额度', value: payload.remaining_credits })
-  if (payload.usage_total) stats.push({ label: '已用额度', value: payload.usage_total })
-  if (payload.plan_credits) stats.push({ label: '总额度', value: payload.plan_credits })
-  if (stats.length === 0) return null
-  return (
-    <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {stats.map(item => <ResultStat key={item.label} label={item.label} value={item.value} />)}
-    </div>
-  )
-}
-
-export function ActionResultModal({
-  title,
-  payload,
-  onClose,
-}: {
-  title: string
-  payload: any
-  onClose: () => void
-}) {
-  const content = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)
-
-  return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div
-        className="dialog-panel dialog-panel-lg"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
-          <div>
-            <h2 className="text-base font-semibold text-[var(--text-primary)]">{title}</h2>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">操作结果</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(content)}>
-              <Copy className="h-4 w-4 mr-1" />
-              复制
-            </Button>
-            <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-        <div className="px-6 py-4">
-          <ActionResultHighlights payload={payload} />
-          <pre className="bg-[var(--bg-hover)] border border-[var(--border)]  p-4 text-xs text-[var(--text-secondary)] whitespace-pre-wrap break-all overflow-auto max-h-[65vh]">
-            {content}
-          </pre>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-export function ActionParamsModal({
-  action,
-  initialValues,
-  submitting,
-  onClose,
-  onSubmit,
-}: {
-  action: any
-  initialValues: Record<string, string>
-  submitting: boolean
-  onClose: () => void
-  onSubmit: (params: Record<string, string>) => void
-}) {
-  const [form, setForm] = useState<Record<string, string>>(initialValues)
-
-  useEffect(() => {
-    setForm(initialValues)
-  }, [action?.id, initialValues])
-
-  const params = Array.isArray(action?.params) ? action.params : []
-
-  return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div
-        className="dialog-panel dialog-panel-md"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
-          <div>
-            <h2 className="text-base font-semibold text-[var(--text-primary)]">{action?.label || '动作参数'}</h2>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">填写执行该动作所需的参数</p>
-          </div>
-          <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="px-6 py-4 space-y-4">
-          {params.map((param: any) => {
-            const value = form[param.key] ?? ''
-            if (Array.isArray(param.options) && param.options.length > 0) {
-              return (
-                <label key={param.key} className="block">
-                  <div className="mb-1 text-xs text-[var(--text-muted)]">{param.label || param.key}</div>
-                  <select
-                    value={value}
-                    onChange={e => setForm(current => ({ ...current, [param.key]: e.target.value }))}
-                    className="w-full border-2 border-[var(--border)] bg-[var(--bg-hover)] px-3 py-2 text-sm outline-none focus:border-[var(--text-accent)]"
-                  >
-                    {param.options.map((option: string) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                </label>
-              )
-            }
-            if (param.type === 'textarea') {
-              return (
-                <label key={param.key} className="block">
-                  <div className="mb-1 text-xs text-[var(--text-muted)]">{param.label || param.key}</div>
-                  <textarea
-                    value={value}
-                    onChange={e => setForm(current => ({ ...current, [param.key]: e.target.value }))}
-                    rows={3}
-                    className="w-full border-2 border-[var(--border)] bg-[var(--bg-hover)] px-3 py-2 text-sm outline-none focus:border-[var(--text-accent)]"
-                  />
-                </label>
-              )
-            }
-            return (
-              <label key={param.key} className="block">
-                <div className="mb-1 text-xs text-[var(--text-muted)]">{param.label || param.key}</div>
-                <input
-                  type={param.type === 'number' ? 'number' : 'text'}
-                  value={value}
-                  onChange={e => setForm(current => ({ ...current, [param.key]: e.target.value }))}
-                  className="w-full border-2 border-[var(--border)] bg-[var(--bg-hover)] px-3 py-2 text-sm outline-none focus:border-[var(--text-accent)]"
-                />
-              </label>
-            )
-          })}
-        </div>
-        <div className="px-6 py-4 border-t border-[var(--border)] flex gap-3">
-          <Button onClick={() => onSubmit(form)} disabled={submitting} className="flex-1">
-            {submitting ? '执行中...' : '执行'}
-          </Button>
-          <Button variant="outline" onClick={onClose} disabled={submitting} className="flex-1">取消</Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-// ── 行操作（详情 / 检测 / 删除）────────────────────────────
+// Row actions
 export function ActionMenu({
   acc,
   onDetail,
@@ -798,19 +641,20 @@ export function ActionMenu({
   onResult?: (title: string, payload: any) => void
   onChanged?: () => void
 }) {
+  const { t, language } = useI18n()
   const { trackJob } = useLiveJobs()
   const [running, setRunning] = useState(false)
 
   return (
     <div className="flex min-w-[120px] items-center justify-end gap-1.5 whitespace-nowrap">
       <button type="button" onClick={onDetail} className="table-action-btn">
-        详情
+        {t('accounts.detail')}
       </button>
       <button
         type="button"
         className="table-action-btn"
         disabled={running}
-        title="检测此账号"
+        title={t('accounts.checkAccountTitle')}
         onClick={() => {
           setRunning(true)
           apiFetch(`/accounts/${acc.id}/check`, { method: 'POST' })
@@ -820,7 +664,7 @@ export function ActionMenu({
                 trackJob(
                   {
                     taskId: resp.task_id,
-                    title: `${acc.email} · 检测`,
+                    title: t('accounts.checkTaskTitle', { email: acc.email }),
                     source: 'batch',
                   },
                   { force: true },
@@ -829,36 +673,37 @@ export function ActionMenu({
             })
             .catch((e: any) => {
               setRunning(false)
-              window.alert(e?.message || '检测请求失败')
+              window.alert(localizeEventMessage(e?.message || t('accounts.checkRequestFailed'), language))
             })
         }}
       >
-        {running ? '…' : '检测'}
+        {running ? '…' : t('accounts.checkOne')}
       </button>
       <button
         type="button"
         className="table-action-btn table-action-btn-danger"
         onClick={() => {
-          if (!confirm(`确认删除 ${acc.email}？`)) return
+          if (!confirm(t('accounts.deleteAccountConfirm', { email: acc.email }))) return
           apiFetch(`/accounts/${acc.id}`, { method: 'DELETE' }).then(onDelete)
         }}
       >
-        删除
+        {t('common.delete')}
       </button>
     </div>
   )
 }
 
-// ── 账号详情弹框 ───────────────────────────────────────────
+// Account details modal
 function normalizeLifecycle(value: string) {
   return value === 'invalid' ? 'invalid' : 'registered'
 }
 
-function lifecycleLabel(value: string) {
-  return value === 'invalid' ? '已失效' : '已注册'
+function lifecycleLabel(value: string, language: 'zh-CN' | 'en-US') {
+  return translateAccountStatus(value, language)
 }
 
 export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () => void; onSave: () => void }) {
+  const { t, language } = useI18n()
   const { trackJob } = useLiveJobs()
   const [form, setForm] = useState({
     lifecycle_status: normalizeLifecycle(getLifecycleStatus(acc)),
@@ -930,12 +775,14 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b-2 border-[var(--border-hard)] bg-[var(--bg-input)] px-4 py-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className={cn('xy-lamp', statusLamp)}>{displayStatus}</span>
+              <span className={cn('xy-lamp', statusLamp)}>
+                {translateAccountStatus(displayStatus, language)}
+              </span>
               <span className="xy-lamp xy-lamp-cyan">
-                {lifecycleLabel(normalizeLifecycle(getLifecycleStatus(acc)))}
+                {lifecycleLabel(normalizeLifecycle(getLifecycleStatus(acc)), language)}
               </span>
               <span className="xy-lamp">
-                {acc.plan_name || overview.plan_name || overview.plan || planState || '未知套餐'}
+                {acc.plan_name || overview.plan_name || overview.plan || translateAccountStatus(planState, language) || t('accounts.unknownPlan')}
               </span>
             </div>
             <div className="mt-2 truncate font-[family-name:var(--font-mono)] text-[14px] font-semibold">
@@ -956,9 +803,9 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
             <div className="space-y-1 p-3">
               {(
                 [
-                  { id: 'overview' as const, label: '概览' },
-                  { id: 'secrets' as const, label: '凭据' },
-                  { id: 'edit' as const, label: '编辑' },
+                  { id: 'overview' as const, label: t('accounts.tabOverview') },
+                  { id: 'secrets' as const, label: t('accounts.tabCredentials') },
+                  { id: 'edit' as const, label: t('accounts.tabEdit') },
                 ] as const
               ).map((item) => (
                 <button
@@ -978,20 +825,22 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
             </div>
             <div className="space-y-2 border-t-2 border-[var(--border-soft)] p-3 text-[12px]">
               <div className="xy-kv">
-                <span>有效性</span>
-                <span>{validity || '—'}</span>
+                <span>{t('accounts.validity')}</span>
+                <span>{translateAccountStatus(validity, language) || '—'}</span>
               </div>
               <div className="xy-kv">
-                <span>密码</span>
+                <span>{t('common.password')}</span>
                 <span className="max-w-[120px] truncate break-all">{acc.password || '—'}</span>
               </div>
               {verificationMailbox?.email ? (
                 <div className="break-all text-[11px] text-[var(--text-muted)]">
-                  验证箱 {verificationMailbox.email}
+                  {t('accounts.verificationMailbox')} · {verificationMailbox.email}
                 </div>
               ) : null}
               {copied ? (
-                <div className="text-[11px] text-[var(--ok)]">已复制 {copied}</div>
+                <div className="text-[11px] text-[var(--ok)]">
+                  {t('accounts.copied', { label: copied })}
+                </div>
               ) : null}
             </div>
           </aside>
@@ -1000,13 +849,15 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
             {tab === 'overview' && (
               <div className="space-y-4">
                 <section className="border-2 border-[var(--border)] bg-[var(--bg-input)] p-3">
-                  <div className="mb-2 text-[12px] font-semibold text-[var(--text-secondary)]">关键信息</div>
+                  <div className="mb-2 text-[12px] font-semibold text-[var(--text-secondary)]">
+                    {t('accounts.keyInfo')}
+                  </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {[
-                      ['邮箱', acc.email],
-                      ['套餐', acc.plan_name || overview.plan_name || overview.plan || planState || '—'],
-                      ['生命周期', lifecycleLabel(normalizeLifecycle(getLifecycleStatus(acc)))],
-                      ['有效性', validity || '—'],
+                      [t('common.email'), acc.email],
+                      [t('accounts.plan'), acc.plan_name || overview.plan_name || overview.plan || translateAccountStatus(planState, language) || '—'],
+                      [t('accounts.lifecycle'), lifecycleLabel(normalizeLifecycle(getLifecycleStatus(acc)), language)],
+                      [t('accounts.validity'), translateAccountStatus(validity, language) || '—'],
                     ].map(([k, v]) => (
                       <div key={k as string} className="border border-[var(--border-soft)] bg-[var(--bg-pane)] px-2.5 py-2">
                         <div className="text-[10px] text-[var(--text-muted)]">{k}</div>
@@ -1018,7 +869,9 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
 
                 {(primaryMetrics.length > 0 || secondaryMetrics.length > 0) && (
                   <section>
-                    <div className="mb-2 text-[12px] font-semibold text-[var(--text-secondary)]">指标</div>
+                    <div className="mb-2 text-[12px] font-semibold text-[var(--text-secondary)]">
+                      {t('accounts.metrics')}
+                    </div>
                     <div className="flex flex-col gap-1.5">
                       {[...primaryMetrics, ...secondaryMetrics.slice(0, 6)].map((metric: any) => (
                         <div
@@ -1026,11 +879,11 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
                           className="flex items-center justify-between gap-3 border-2 border-[var(--border)] bg-[var(--bg-pane)] px-3 py-2"
                         >
                           <div className="min-w-0 text-[12px] text-[var(--text-muted)]">
-                            {metric?.label || '-'}
-                            {metric?.sub ? ` · ${metric.sub}` : ''}
+                            {metric?.label ? localizeEventMessage(metric.label, language) : '-'}
+                            {metric?.sub ? ` · ${localizeEventMessage(metric.sub, language)}` : ''}
                           </div>
                           <div className="shrink-0 font-[family-name:var(--font-mono)] text-[13px] font-semibold">
-                            {formatResultValue(metric?.value)}
+                            {formatResultValue(metric?.value, language)}
                           </div>
                         </div>
                       ))}
@@ -1045,7 +898,7 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
                   <div className="flex flex-wrap gap-1.5">
                     {displayBadges.map((badge: any, index: number) => (
                       <span key={`${badge?.label || 'badge'}-${index}`} className="xy-lamp">
-                        {badge?.label}
+                        {badge?.label ? localizeEventMessage(badge.label, language) : '-'}
                       </span>
                     ))}
                   </div>
@@ -1056,7 +909,7 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
             {tab === 'secrets' && (
               <div className="space-y-3">
                 {platformCredentials.length === 0 && providerAccounts.length === 0 ? (
-                  <div className="empty-state-panel">暂无凭据</div>
+                  <div className="empty-state-panel">{t('accounts.noCredentials')}</div>
                 ) : null}
 
                 {platformCredentials.map((item: any) => (
@@ -1070,7 +923,7 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
                         onClick={() => copyField(item.key, String(item.value || ''))}
                         className="table-action-btn"
                       >
-                        复制
+                        {t('accounts.copy')}
                       </button>
                     </div>
                     <div className="max-h-32 overflow-y-auto border border-[var(--border-soft)] bg-[var(--bg-input)] px-2 py-1.5 font-[family-name:var(--font-mono)] text-[11px] break-all text-[var(--text-secondary)]">
@@ -1104,7 +957,7 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
                                   onClick={() => copyField(key, String(value))}
                                   className="table-action-btn"
                                 >
-                                  复制
+                                  {t('accounts.copy')}
                                 </button>
                               ) : null}
                             </div>
@@ -1123,11 +976,13 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
             {tab === 'edit' && (
               <div className="space-y-4">
                 <div>
-                  <div className="mb-2 text-[12px] font-semibold text-[var(--text-secondary)]">状态</div>
+                  <div className="mb-2 text-[12px] font-semibold text-[var(--text-secondary)]">
+                    {t('common.status')}
+                  </div>
                   <div className="flex gap-2">
                     {([
-                      { value: 'registered', label: '已注册' },
-                      { value: 'invalid', label: '已失效' },
+                      { value: 'registered', label: t('accounts.registered') },
+                      { value: 'invalid', label: t('accounts.invalidStatus') },
                     ] as const).map((opt) => {
                       const on = form.lifecycle_status === opt.value
                       return (
@@ -1150,7 +1005,9 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
                 </div>
 
                 <label className="block space-y-1">
-                  <span className="text-[12px] font-semibold text-[var(--text-secondary)]">主凭证</span>
+                  <span className="text-[12px] font-semibold text-[var(--text-secondary)]">
+                    {t('accounts.primaryCredential')}
+                  </span>
                   <textarea
                     value={form.primary_token}
                     onChange={(e) => setForm((f) => ({ ...f, primary_token: e.target.value }))}
@@ -1161,7 +1018,9 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
                 </label>
 
                 <label className="block space-y-1">
-                  <span className="text-[12px] font-semibold text-[var(--text-secondary)]">试用链接</span>
+                  <span className="text-[12px] font-semibold text-[var(--text-secondary)]">
+                    {t('accounts.trialLink')}
+                  </span>
                   <textarea
                     value={form.cashier_url}
                     onChange={(e) => setForm((f) => ({ ...f, cashier_url: e.target.value }))}
@@ -1187,7 +1046,7 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
                   trackJob(
                     {
                       taskId: resp.task_id,
-                      title: `${acc.email} · 检测`,
+                      title: t('accounts.checkTaskTitle', { email: acc.email }),
                       source: 'batch',
                     },
                     { force: true },
@@ -1195,19 +1054,19 @@ export function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () =>
                   onClose()
                 }
               } catch (e: any) {
-                window.alert(e?.message || '检测请求失败')
+                window.alert(localizeEventMessage(e?.message || t('accounts.checkRequestFailed'), language))
               } finally {
                 setChecking(false)
               }
             }}
           >
-            {checking ? '提交中…' : '检测'}
+            {checking ? t('accounts.checking') : t('accounts.checkOne')}
           </Button>
           <Button onClick={save} disabled={saving || checking} className="flex-1">
-            {saving ? '保存中…' : '保存'}
+            {saving ? t('common.saving') : t('common.save')}
           </Button>
           <Button variant="outline" onClick={onClose} className="flex-1" disabled={saving || checking}>
-            关闭
+            {t('common.close')}
           </Button>
         </div>
       </div>
@@ -1219,8 +1078,9 @@ function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ')
 }
 
-// ── 导入弹框 ────────────────────────────────────────────────
+// Import modal
 export function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const { t, language } = useI18n()
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<string | null>(null)
@@ -1229,20 +1089,26 @@ export function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: 
     try {
       const lines = text.trim().split('\n').filter(Boolean)
       const res = await apiFetch('/accounts/import', { method: 'POST', body: JSON.stringify({ platform: 'chatgpt', lines }) })
-      setResult(`导入成功 ${res.created} 个`); onDone()
-    } catch (e: any) { setResult(`失败: ${e.message}`) } finally { setLoading(false) }
+      setResult(t('accounts.importSuccess', { count: res.created })); onDone()
+    } catch (e: any) {
+      setResult(t('accounts.importFailed', { reason: localizeEventMessage(e?.message || t('common.error'), language) }))
+    } finally { setLoading(false) }
   }
   return (
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog-panel dialog-panel-sm p-6" onClick={e => e.stopPropagation()}>
-        <h2 className="text-base font-semibold text-[var(--text-primary)] mb-2">批量导入</h2>
-        <p className="text-xs text-[var(--text-muted)] mb-3">每行格式: <code className="bg-[var(--bg-hover)] px-1 rounded">email password [cashier_url]</code></p>
+        <h2 className="text-base font-semibold text-[var(--text-primary)] mb-2">{t('accounts.batchImport')}</h2>
+        <p className="text-xs text-[var(--text-muted)] mb-3">
+          {t('accounts.importFormatHelp')} <code className="bg-[var(--bg-hover)] px-1 rounded">email password [cashier_url]</code>
+        </p>
         <textarea value={text} onChange={e => setText(e.target.value)} rows={8}
           className="control-surface control-surface-mono resize-none mb-3" />
         {result && <p className="text-sm text-emerald-400 mb-3">{result}</p>}
         <div className="flex gap-2">
-          <Button onClick={submit} disabled={loading} className="flex-1">{loading ? '导入中...' : '导入'}</Button>
-          <Button variant="outline" onClick={onClose} className="flex-1">取消</Button>
+          <Button onClick={submit} disabled={loading} className="flex-1">
+            {loading ? t('accounts.importing') : t('accounts.import')}
+          </Button>
+          <Button variant="outline" onClick={onClose} className="flex-1">{t('common.cancel')}</Button>
         </div>
       </div>
     </div>
@@ -1262,11 +1128,12 @@ export function ExportMenu({
   selectedIds: number[]
   layout?: 'menu' | 'grid'
 }) {
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const hasSelection = selectedIds.length > 0
+  const exportFormats = useMemo(() => getAccountExportFormats(language), [language])
 
   useEffect(() => {
     if (!open) return
@@ -1293,7 +1160,7 @@ export function ExportMenu({
       triggerBrowserDownload(blob, filename)
       setOpen(false)
     } catch (e: any) {
-      window.alert(e?.message || '出仓失败')
+      window.alert(localizeEventMessage(e?.message || t('accounts.exportFailed'), language))
     } finally {
       setLoading(null)
     }
@@ -1302,7 +1169,7 @@ export function ExportMenu({
   if (layout === 'grid') {
     return (
       <div className="grid gap-2 sm:grid-cols-3">
-        {ACCOUNT_EXPORT_FORMATS.map((option) => (
+        {exportFormats.map((option) => (
           <button
             key={option.key}
             type="button"
@@ -1311,7 +1178,7 @@ export function ExportMenu({
             className="border border-[var(--border)] bg-[var(--bg-input)] px-3 py-3 text-left transition-colors hover:border-[var(--accent-edge)] hover:bg-[var(--accent-soft)] disabled:opacity-45"
           >
             <div className="font-[family-name:var(--font-mono)] text-[10px] uppercase tracking-[0.08em] text-[var(--accent-strong)]">
-              {loading === option.key ? 'writing…' : option.key}
+              {loading === option.key ? t('accounts.writing') : option.key}
             </div>
             <div className="mt-1 text-[13px] font-semibold text-[var(--text-primary)]">
               {option.label}
@@ -1327,10 +1194,10 @@ export function ExportMenu({
     <div className="absolute right-0 top-full z-[80] mt-1 min-w-[260px] border-2 border-[var(--border-hard)] bg-[var(--bg-card)] py-1 shadow-[var(--shadow-hard)]">
       <div className="border-b border-[var(--border-soft)] px-3 py-1.5 font-[family-name:var(--font-mono)] text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
         {hasSelection
-          ? `scope · ${selectedIds.length} marked`
-          : 'scope · current filter'}
+          ? t('accounts.scopeSelected', { count: selectedIds.length })
+          : t('accounts.scopeCurrent')}
       </div>
-      {ACCOUNT_EXPORT_FORMATS.map((option) => (
+      {exportFormats.map((option) => (
         <button
           key={option.key}
           type="button"

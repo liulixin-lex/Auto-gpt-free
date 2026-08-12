@@ -3,10 +3,55 @@ name: Build & Release
 on:
   push:
     tags:
-      - 'v*'  # 推送 v1.0.0 这样的 tag 时触发
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  PLAYWRIGHT_BROWSERS_PATH: '0'
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            electron/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Verify backend
+        run: |
+          pip install -r requirements.txt
+          python -m pytest -q
+
+      - name: Verify frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Audit JavaScript dependencies
+        run: |
+          cd frontend && npm audit --audit-level=high
+          cd ../electron && npm audit --audit-level=high
+
   build-mac:
+    needs: verify
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,7 +59,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -24,8 +69,16 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements.txt
 
-      - name: Install Playwright browsers
-        run: playwright install chromium
+      - name: Install bundled Chromium
+        run: |
+          python -m playwright install chromium
+          python -m patchright install chromium
+
+      - name: Install bundled Camoufox
+        run: |
+          python -m camoufox fetch
+          python -c "from camoufox import launch_options; launch_options(headless=True)"
+          python -c "from camoufox.geolocation import download_mmdb; download_mmdb()"
 
       - name: Build frontend
         run: cd frontend && npm ci --legacy-peer-deps && npm run build
@@ -45,9 +98,24 @@ jobs:
             --add-data "core:core" \
             --add-data "api:api" \
             --add-data "services:services" \
+            --add-data "providers:providers" \
+            --add-data "application:application" \
+            --add-data "infrastructure:infrastructure" \
+            --add-data "domain:domain" \
             --add-data "static:static" \
+            --hidden-import uvicorn.logging \
+            --hidden-import uvicorn.loops.auto \
+            --hidden-import uvicorn.protocols.http.auto \
+            --hidden-import uvicorn.protocols.websockets.auto \
+            --hidden-import uvicorn.lifespan.on \
+            --hidden-import services.turnstile_solver.api_solver \
+            --hidden-import services.turnstile_solver.db_results \
+            --hidden-import services.turnstile_solver.browser_configs \
+            --hidden-import services.turnstile_solver.start \
             --collect-all browserforge \
             --collect-all camoufox \
+            --collect-all playwright \
+            --collect-all patchright \
             --collect-all apify_fingerprint_datapoints \
             --collect-all language_tags \
             --collect-all ua_parser \
@@ -57,6 +125,23 @@ jobs:
             --collect-all aiofiles \
             --collect-all werkzeug \
             main.py
+          PLAYWRIGHT_SOURCE="$(python -c 'from pathlib import Path; import playwright; print(Path(playwright.__file__).parent / "driver" / "package" / ".local-browsers")')"
+          PLAYWRIGHT_TARGET="$(find dist/backend -type d -path '*/playwright/driver/package' -print -quit)"
+          test -n "$PLAYWRIGHT_TARGET"
+          mkdir -p "$PLAYWRIGHT_TARGET/.local-browsers"
+          cp -R "$PLAYWRIGHT_SOURCE/." "$PLAYWRIGHT_TARGET/.local-browsers/"
+          PATCHRIGHT_SOURCE="$(python -c 'from pathlib import Path; import patchright; print(Path(patchright.__file__).parent / "driver" / "package" / ".local-browsers")')"
+          PATCHRIGHT_TARGET="$(find dist/backend -type d -path '*/patchright/driver/package' -print -quit)"
+          test -n "$PATCHRIGHT_TARGET"
+          mkdir -p "$PATCHRIGHT_TARGET/.local-browsers"
+          cp -R "$PATCHRIGHT_SOURCE/." "$PATCHRIGHT_TARGET/.local-browsers/"
+          CAMOUFOX_PATH="$(python -c 'from camoufox.pkgman import camoufox_path; print(camoufox_path())')"
+          CAMOUFOX_CACHE="$(python -c 'from camoufox.pkgman import INSTALL_DIR; print(INSTALL_DIR)')"
+          mkdir -p electron/camoufox-browser
+          cp -R "$CAMOUFOX_PATH/." electron/camoufox-browser/
+          mkdir -p electron/camoufox-addons electron/camoufox-geoip
+          cp -R "$CAMOUFOX_CACHE/addons/." electron/camoufox-addons/
+          cp -R "$CAMOUFOX_CACHE/geoip/." electron/camoufox-geoip/
           mkdir -p electron/backend
           cp -r dist/backend electron/backend/
 
@@ -69,14 +154,6 @@ jobs:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
           ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
 
-      - name: Ad-hoc sign macOS app (avoid xattr -cr)
-        run: |
-          APP_PATH=$(find electron/dist -name "*.app" -maxdepth 2 | head -1)
-          if [ -n "$APP_PATH" ]; then
-            codesign --force --deep --sign - "$APP_PATH"
-            echo "Signed: $APP_PATH"
-          fi
-
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -84,9 +161,12 @@ jobs:
           path: |
             electron/dist/*.dmg
             electron/dist/*.zip
+            electron/dist/latest-mac.yml
+            electron/dist/*.blockmap
           if-no-files-found: error
 
   build-win:
+    needs: verify
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,7 +174,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -103,6 +183,17 @@ jobs:
 
       - name: Install Python deps
         run: pip install -r requirements.txt
+
+      - name: Install bundled Chromium
+        run: |
+          python -m playwright install chromium
+          python -m patchright install chromium
+
+      - name: Install bundled Camoufox
+        run: |
+          python -m camoufox fetch
+          python -c "from camoufox import launch_options; launch_options(headless=True)"
+          python -c "from camoufox.geolocation import download_mmdb; download_mmdb()"
 
       - name: Build frontend
         run: cd frontend && npm ci --legacy-peer-deps && npm run build
@@ -124,9 +215,24 @@ jobs:
             --add-data "core;core" `
             --add-data "api;api" `
             --add-data "services;services" `
+            --add-data "providers;providers" `
+            --add-data "application;application" `
+            --add-data "infrastructure;infrastructure" `
+            --add-data "domain;domain" `
             --add-data "static;static" `
+            --hidden-import uvicorn.logging `
+            --hidden-import uvicorn.loops.auto `
+            --hidden-import uvicorn.protocols.http.auto `
+            --hidden-import uvicorn.protocols.websockets.auto `
+            --hidden-import uvicorn.lifespan.on `
+            --hidden-import services.turnstile_solver.api_solver `
+            --hidden-import services.turnstile_solver.db_results `
+            --hidden-import services.turnstile_solver.browser_configs `
+            --hidden-import services.turnstile_solver.start `
             --collect-all browserforge `
             --collect-all camoufox `
+            --collect-all playwright `
+            --collect-all patchright `
             --collect-all apify_fingerprint_datapoints `
             --collect-all language_tags `
             --collect-all ua_parser `
@@ -136,6 +242,26 @@ jobs:
             --collect-all aiofiles `
             --collect-all werkzeug `
             main.py
+          $browserSource = python -c "from pathlib import Path; import playwright; print(Path(playwright.__file__).parent / 'driver' / 'package' / '.local-browsers')"
+          $playwrightPackage = Get-ChildItem -Path dist/backend -Directory -Recurse | Where-Object { ($_.FullName -replace '\\', '/') -match '/playwright/driver/package$' } | Select-Object -First 1
+          if (-not $playwrightPackage) { throw "Packaged Playwright driver directory not found" }
+          $browserTarget = Join-Path $playwrightPackage.FullName ".local-browsers"
+          New-Item -ItemType Directory -Force -Path $browserTarget | Out-Null
+          Copy-Item -Recurse -Force "$browserSource/*" $browserTarget
+          $patchrightSource = python -c "from pathlib import Path; import patchright; print(Path(patchright.__file__).parent / 'driver' / 'package' / '.local-browsers')"
+          $patchrightPackage = Get-ChildItem -Path dist/backend -Directory -Recurse | Where-Object { ($_.FullName -replace '\\', '/') -match '/patchright/driver/package$' } | Select-Object -First 1
+          if (-not $patchrightPackage) { throw "Packaged Patchright driver directory not found" }
+          $patchrightTarget = Join-Path $patchrightPackage.FullName ".local-browsers"
+          New-Item -ItemType Directory -Force -Path $patchrightTarget | Out-Null
+          Copy-Item -Recurse -Force "$patchrightSource/*" $patchrightTarget
+          $camoufoxSource = python -c "from camoufox.pkgman import camoufox_path; print(camoufox_path())"
+          $camoufoxCache = python -c "from camoufox.pkgman import INSTALL_DIR; print(INSTALL_DIR)"
+          New-Item -ItemType Directory -Force -Path electron/camoufox-browser | Out-Null
+          Copy-Item -Recurse -Force "$camoufoxSource/*" electron/camoufox-browser
+          New-Item -ItemType Directory -Force -Path electron/camoufox-addons | Out-Null
+          Copy-Item -Recurse -Force "$camoufoxCache/addons/*" electron/camoufox-addons
+          New-Item -ItemType Directory -Force -Path electron/camoufox-geoip | Out-Null
+          Copy-Item -Recurse -Force "$camoufoxCache/geoip/*" electron/camoufox-geoip
           New-Item -ItemType Directory -Force -Path electron/backend
           Copy-Item -Recurse dist/backend electron/backend/
         shell: pwsh
@@ -153,10 +279,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: win-builds
-          path: electron/dist/*.exe
+          path: |
+            electron/dist/*.exe
+            electron/dist/latest.yml
+            electron/dist/*.blockmap
           if-no-files-found: error
 
   build-docker:
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -188,8 +318,8 @@ jobs:
           push: true
           build-args: APP_VERSION=${{ steps.version.outputs.version }}
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+            ghcr.io/liulixin-lex/auto-gpt-free:latest
+            ghcr.io/liulixin-lex/auto-gpt-free:${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

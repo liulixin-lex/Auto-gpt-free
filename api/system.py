@@ -10,7 +10,7 @@ from core.version import __version__
 
 router = APIRouter(prefix="/system", tags=["system"])
 
-_RELEASE_API = "https://api.github.com/repos/asz798838958/aBaiAutoplus/releases/latest"
+_RELEASE_API = "https://api.github.com/repos/liulixin-lex/Auto-gpt-free/releases/latest"
 _VERSION_CACHE: dict = {}
 _VERSION_CACHE_TTL = 600  # 10 分钟，避免 GitHub API rate limit (60/h unauth)
 _VERSION_CACHE_LOCK = threading.Lock()

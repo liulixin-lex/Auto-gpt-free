@@ -1,5 +1,5 @@
-appId: com.abaiautoplus.app
-productName: aBaiAutoplus
+appId: com.liulixinlex.autogptfree
+productName: Auto-gpt-free
 copyright: Copyright © 2026
 
 directories:
@@ -9,13 +9,25 @@ directories:
 # 自动更新：从 GitHub Releases 检查
 publish:
   provider: github
-  owner: asz798838958
-  repo: aBaiAutoplus
+  owner: liulixin-lex
+  repo: Auto-gpt-free
 
 # 将 PyInstaller 产物和前端静态文件打包进 resources/
 extraResources:
   - from: backend
     to: backend
+    filter:
+      - "**/*"
+  - from: camoufox-browser
+    to: camoufox-browser
+    filter:
+      - "**/*"
+  - from: camoufox-addons
+    to: camoufox-addons
+    filter:
+      - "**/*"
+  - from: camoufox-geoip
+    to: camoufox-geoip
     filter:
       - "**/*"
 
@@ -24,18 +36,15 @@ mac:
   target:
     - target: dmg
     - target: zip
-  icon: build/icon.icns
 
 win:
   target:
     - target: nsis
-  icon: build/icon.ico
 
 linux:
   target:
     - target: AppImage
   category: Utility
-  icon: build/icon.png
 
 nsis:
   oneClick: false

@@ -10,7 +10,8 @@ sleep 1
 
 # 启动 x11vnc（无密码，仅本地 VNC）
 if [ -n "$VNC_PASSWORD" ]; then
-    x11vnc -display :99 -rfbauth <(x11vnc -storepasswd "$VNC_PASSWORD" /tmp/vncpass && echo /tmp/vncpass) -forever -shared &
+    x11vnc -storepasswd "$VNC_PASSWORD" /tmp/vncpass >/dev/null
+    x11vnc -display :99 -rfbauth /tmp/vncpass -forever -shared &
 else
     x11vnc -display :99 -nopw -forever -shared &
 fi

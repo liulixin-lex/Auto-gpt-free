@@ -1,7 +1,7 @@
 """Shared test fixtures.
 
 Uses a temporary file-based SQLite database with check_same_thread=False
-so that the app's background threads (scheduler, task_runtime) can share it.
+so that the task runtime can share it.
 """
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 _TEST_DB_PATH = _tmp.name
 os.environ["ACCOUNT_MANAGER_DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
+_TEST_APP_PASSWORD = "test-panel-password"
+os.environ["APP_PASSWORD"] = _TEST_APP_PASSWORD
 
 import pytest
 from sqlmodel import SQLModel, create_engine
@@ -36,11 +38,21 @@ def _reset_db():
 
 
 @pytest.fixture()
-def client():
-    """FastAPI TestClient with a clean database."""
+def client(monkeypatch):
+    """Authenticated FastAPI client without starting browser/background workers."""
+    from services import solver_manager
+    from services.task_runtime import task_runtime
+
+    monkeypatch.setattr(solver_manager, "start_async", lambda: None)
+    monkeypatch.setattr(solver_manager, "stop", lambda: None)
+    monkeypatch.setattr(task_runtime, "start", lambda: None)
+    monkeypatch.setattr(task_runtime, "stop", lambda: None)
+
     from main import app
 
     with TestClient(app, raise_server_exceptions=False) as c:
+        response = c.post("/api/auth/login", json={"password": _TEST_APP_PASSWORD})
+        assert response.status_code == 200
         yield c
 
 

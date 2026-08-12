@@ -51,11 +51,6 @@ class BasePlatform(ABC):
     supported_identity_modes: list = []
     supported_oauth_providers: list = []
     protocol_captcha_order: tuple[str, ...] = ()
-    # Declarative capabilities - override in subclasses
-    capabilities: list[str] = []
-    # Per-capability label/param overrides - override in subclasses
-    capability_overrides: dict[str, dict] = {}
-
     def __init__(self, config: RegisterConfig = None):
         from core.registry import get_platform_capabilities
 
@@ -66,9 +61,6 @@ class BasePlatform(ABC):
         self.supported_executors = list(capabilities.get("supported_executors", [])) or list(self.supported_executors)
         self.supported_identity_modes = list(capabilities.get("supported_identity_modes", [])) or list(self.supported_identity_modes)
         self.supported_oauth_providers = list(capabilities.get("supported_oauth_providers", [])) or list(self.supported_oauth_providers)
-        db_caps = list(capabilities.get("capabilities", []))
-        if db_caps:
-            self.capabilities = db_caps
         if self.config.executor_type not in self.supported_executors:
             raise NotImplementedError(
                 f"{self.display_name} 暂不支持 '{self.config.executor_type}' 执行器，"
@@ -166,7 +158,9 @@ class BasePlatform(ABC):
             result = ProtocolOAuthFlow(adapter).run(ctx)
             return self._attach_identity_metadata(self._account_from_registration_result(result), identity)
 
-        self.log(f"邮箱: {identity.email}")
+        from domain.registration_runtime import stable_resource_ref
+
+        self.log(f"邮箱已分配 ref={stable_resource_ref(identity.email)}")
         adapter = self.build_protocol_mailbox_adapter()
         if adapter is None:
             raise NotImplementedError(f"{self.display_name} 未实现协议邮箱注册适配器")
@@ -181,135 +175,6 @@ class BasePlatform(ABC):
     def get_trial_url(self, account: Account) -> Optional[str]:
         """生成试用激活链接（可选实现）"""
         return None
-
-    def get_platform_actions(self) -> list:
-        """
-        Return platform-supported extra operation list, each item format:
-        {"id": str, "label": str, "params": [{"key": str, "label": str, "type": str}]}
-        
-        For backward compatibility, this now uses the capability system.
-        Override this method in platform classes for custom actions.
-        """
-        # Use capability system if capabilities are defined
-        if hasattr(self, 'capabilities') and self.capabilities:
-            return self.get_capability_actions()
-        
-        # Fallback to empty list for platforms that haven't migrated yet
-        return []
-
-    def execute_action(self, action_id: str, account: Account, params: dict) -> dict:
-        """
-        Execute platform-specific action, return {"ok": bool, "data": any, "error": str}
-        """
-        # Try to handle as standard capability first
-        if action_id in self.capabilities:
-            return self._handle_capability(action_id, account, params)
-        
-        # Fallback to platform-specific implementation
-        raise NotImplementedError(f"Platform {self.name} does not support action: {action_id}")
-    
-    def _handle_capability(self, capability_id: str, account: Account, params: dict) -> dict:
-        """Handle standard capabilities with default implementations."""
-        try:
-            if capability_id == "query_state":
-                return self._handle_query_state(account, params)
-            elif capability_id == "refresh_token":
-                return self._handle_refresh_token(account, params)
-            elif capability_id == "generate_link":
-                return self._handle_generate_link(account, params)
-            elif capability_id == "switch_desktop":
-                return self._handle_switch_desktop(account, params)
-            elif capability_id == "upload_cpa":
-                return self._handle_upload_cpa(account, params)
-            elif capability_id == "check_trial":
-                return self._handle_check_trial(account, params)
-            elif capability_id == "generate_link_browser":
-                return self._handle_generate_link_browser(account, params)
-            elif capability_id == "create_api_key":
-                return self._handle_create_api_key(account, params)
-            else:
-                # Fall back to platform-specific implementation
-                return self._execute_platform_action(capability_id, account, params)
-        except NotImplementedError:
-            # If platform doesn't implement the capability, return error
-            return {"ok": False, "error": f"Capability {capability_id} not implemented for {self.display_name}"}
-    
-    def _execute_platform_action(self, action_id: str, account: Account, params: dict) -> dict:
-        """Override this method in platform classes for custom actions."""
-        raise NotImplementedError(f"Platform {self.name} does not implement action: {action_id}")
-    
-    # Default handlers for standard capabilities
-    def _handle_query_state(self, account: Account, params: dict) -> dict:
-        """Default query_state handler - calls get_quota or returns basic state."""
-        quota_data = self.get_quota(account)
-        if quota_data:
-            return {"ok": True, "data": quota_data}
-        return {
-            "ok": True, 
-            "data": {
-                "status": account.status.value,
-                "user_id": account.user_id,
-                "email": account.email,
-                "platform": account.platform,
-            }
-        }
-    
-    def _handle_refresh_token(self, account: Account, params: dict) -> dict:
-        """Default refresh_token handler - platform should override."""
-        raise NotImplementedError(f"Token refresh not implemented for {self.display_name}")
-    
-    def _handle_generate_link(self, account: Account, params: dict) -> dict:
-        """Default generate_link handler - calls get_trial_url."""
-        trial_url = self.get_trial_url(account)
-        if trial_url:
-            return {"ok": True, "data": {"url": trial_url, "message": "Trial link generated"}}
-        raise NotImplementedError(f"Link generation not implemented for {self.display_name}")
-    
-    def _handle_switch_desktop(self, account: Account, params: dict) -> dict:
-        """Default switch_desktop handler - platform should override."""
-        raise NotImplementedError(f"Desktop switch not implemented for {self.display_name}")
-    
-    def _handle_upload_cpa(self, account: Account, params: dict) -> dict:
-        """Default upload_cpa handler - platform should override."""
-        raise NotImplementedError(f"CPA upload not implemented for {self.display_name}")
-    
-    def _handle_check_trial(self, account: Account, params: dict) -> dict:
-        """Default check_trial handler - platform should override."""
-        raise NotImplementedError(f"Trial check not implemented for {self.display_name}")
-    
-    def _handle_generate_link_browser(self, account: Account, params: dict) -> dict:
-        """Default generate_link_browser handler - platform should override."""
-        raise NotImplementedError(f"Browser link generation not implemented for {self.display_name}")
-    
-    def _handle_create_api_key(self, account: Account, params: dict) -> dict:
-        """Default create_api_key handler - platform should override."""
-        raise NotImplementedError(f"API key creation not implemented for {self.display_name}")
-    
-    def get_platform_capabilities(self) -> list:
-        """Return the platform's declared capabilities."""
-        return list(getattr(self, 'capabilities', []))
-    
-    def get_capability_actions(self) -> list:
-        """
-        Return actions list for backward compatibility.
-        Maps capabilities to action definitions, with per-platform overrides.
-        """
-        from .capability_registry import CapabilityRegistry
-        
-        overrides = getattr(self, 'capability_overrides', {}) or {}
-        actions = []
-        for cap_id in self.get_platform_capabilities():
-            definition = CapabilityRegistry.get_definition(cap_id)
-            if definition:
-                override = overrides.get(cap_id, {})
-                action = {
-                    "id": definition.id,
-                    "label": override.get("label", definition.label),
-                    "params": override.get("params", definition.param_schema),
-                    "sync": override.get("sync", True),
-                }
-                actions.append(action)
-        return actions
 
     def get_quota(self, account: Account) -> dict:
         """查询账号配额（可选实现）"""
@@ -411,7 +276,19 @@ class BasePlatform(ABC):
 
             start()
 
-    def solve_turnstile_with_fallback(self, page_url: str, site_key: str) -> str:
+    def solve_turnstile_with_fallback(
+        self,
+        page_url: str,
+        site_key: str,
+        *,
+        proxy_url: str | None = None,
+        user_agent: str = "",
+        fingerprint_id: str = "",
+        action: str = "",
+        cdata: str = "",
+        pagedata: str = "",
+        attempt_id: str = "",
+    ) -> str:
         errors: list[str] = []
         candidates = self._get_captcha_solver_candidates()
         if not candidates:
@@ -421,7 +298,47 @@ class BasePlatform(ABC):
             try:
                 self.log(f"尝试 Turnstile provider: {provider_key}")
                 solver = self._make_captcha(provider_key=provider_key)
-                token = str(solver.solve_turnstile(page_url, site_key) or "").strip()
+                import time
+
+                from services.captcha_capacity import captcha_provider_capacity
+
+                deadline = float(self.config.extra.get("registration_deadline_monotonic") or 0.0)
+                remaining = max(deadline - time.monotonic(), 1.0) if deadline else 180.0
+                owner_attempt_id = str(self.config.extra.get("registration_attempt_id") or "")
+                with captcha_provider_capacity.slot(
+                    provider_key,
+                    owner_attempt_id=owner_attempt_id,
+                    timeout_seconds=min(remaining, 30.0),
+                    ttl_seconds=int(remaining) + 15,
+                ):
+                    import inspect
+
+                    method = solver.solve_turnstile
+                    available = {
+                        "proxy_url": proxy_url or self.config.proxy,
+                        "user_agent": user_agent,
+                        "timeout_seconds": remaining,
+                        "action": action,
+                        "cdata": cdata,
+                        "pagedata": pagedata,
+                        "attempt_id": attempt_id or owner_attempt_id,
+                    }
+                    signature = inspect.signature(method)
+                    supports_kwargs = any(
+                        item.kind is inspect.Parameter.VAR_KEYWORD
+                        for item in signature.parameters.values()
+                    )
+                    kwargs = (
+                        available
+                        if supports_kwargs
+                        else {
+                            key: value
+                            for key, value in available.items()
+                            if key in signature.parameters
+                        }
+                    )
+                    solved = method(page_url, site_key, **kwargs)
+                token = str(solved or "").strip()
                 if token:
                     return token
                 raise RuntimeError("未返回有效 token")

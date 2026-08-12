@@ -1,7 +1,7 @@
 {
-  "name": "abaiautoplus",
-  "version": "1.0.0",
-  "description": "aBaiAutoplus - 多平台 AI 账号自动注册与管理工具",
+  "name": "auto-gpt-free",
+  "version": "2.0.0",
+  "description": "Auto-gpt-free - ChatGPT 账号注册、检测与管理工具",
   "main": "main.js",
   "scripts": {
     "dev": "electron .",
@@ -12,10 +12,10 @@
     "build:all": "electron-builder --mac --win --linux"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0"
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3"
   },
   "dependencies": {
-    "electron-updater": "^6.3.0"
+    "electron-updater": "^6.8.9"
   }
 }

@@ -69,11 +69,6 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements.txt
 
-      - name: Install bundled Chromium
-        run: |
-          python -m playwright install chromium
-          python -m patchright install chromium
-
       - name: Install bundled Camoufox
         run: |
           python -m camoufox fetch
@@ -125,6 +120,8 @@ jobs:
             --collect-all aiofiles \
             --collect-all werkzeug \
             main.py
+          python -m playwright install chromium
+          python -m patchright install chromium
           PLAYWRIGHT_SOURCE="$(python -c 'from pathlib import Path; import playwright; print(Path(playwright.__file__).parent / "driver" / "package" / ".local-browsers")')"
           PLAYWRIGHT_TARGET="$(find dist/backend -type d -path '*/playwright/driver/package' -print -quit)"
           test -n "$PLAYWRIGHT_TARGET"
@@ -184,11 +181,6 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements.txt
 
-      - name: Install bundled Chromium
-        run: |
-          python -m playwright install chromium
-          python -m patchright install chromium
-
       - name: Install bundled Camoufox
         run: |
           python -m camoufox fetch
@@ -242,6 +234,8 @@ jobs:
             --collect-all aiofiles `
             --collect-all werkzeug `
             main.py
+          python -m playwright install chromium
+          python -m patchright install chromium
           $browserSource = python -c "from pathlib import Path; import playwright; print(Path(playwright.__file__).parent / 'driver' / 'package' / '.local-browsers')"
           $playwrightPackage = Get-ChildItem -Path dist/backend -Directory -Recurse | Where-Object { ($_.FullName -replace '\\', '/') -match '/playwright/driver/package$' } | Select-Object -First 1
           if (-not $playwrightPackage) { throw "Packaged Playwright driver directory not found" }
